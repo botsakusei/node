@@ -5,9 +5,7 @@ import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType
 import { REST } from "@discordjs/rest";
 import sqlite3 from "better-sqlite3";
 import fs from "fs";
-
-// ※ canvas依存を削除しました
-// import { createCanvas } from "canvas"; ←この行を削除
+import fetch from "node-fetch";
 
 // 環境変数
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -108,102 +106,26 @@ function outItemStock(uid, item, count, date = null) {
   return newStock;
 }
 
-// bulkregister コマンド実装（コピペデータ一括登録＋エラーをファイル添付）
-async function handleBulkRegister(interaction) {
-  const text = interaction.options.getString("text");
-  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-  let success = 0, failed = 0, errors = [];
+// ---------- 新機能：csvimportコマンド（CSV添付で一括登録） ----------
 
-  // 柔軟に区切り文字対応
-  const splitLine = (line) => {
-    let parts = line.split("\t");
-    if (parts.length < 5) {
-      parts = line.split(/[\s　,]+/); // 半角/全角スペース/カンマ
-    }
-    return parts;
-  };
-
-  for (const line of lines) {
-    const parts = splitLine(line);
-    if (parts.length < 5) {
-      failed++;
-      errors.push(`パース失敗: ${line}`);
-      continue;
-    }
-    const [date, user, item, type, valueRaw] = parts;
-    let value = parseInt(valueRaw.replace(/[^0-9\-]/g, ""), 10);
-    if (isNaN(value)) {
-      failed++;
-      errors.push(`数値変換失敗: ${line}`);
-      continue;
-    }
-    // DBに商品追加（初見の場合）
-    let validItem = ITEM_LIST.includes(item) ? item : null;
-    if (!validItem) {
-      validItem = item;
-      const row = db.prepare("SELECT stock FROM item_stock WHERE item_name = ?").get(validItem);
-      if (!row) db.prepare("INSERT INTO item_stock (item_name, stock) VALUES (?, ?)").run(validItem, 0);
-      if (!ITEM_LIST.includes(validItem)) ITEM_LIST.push(validItem);
-    }
-    if (type === "在庫" || type === "入庫") {
-      db.prepare("INSERT INTO item_in_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
-      if (type === "在庫") {
-        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(value, validItem);
-      } else {
-        const before = getItemStock(validItem);
-        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem);
-      }
-      success++;
-    } else if (type === "出庫") {
-      db.prepare("INSERT INTO item_out_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
-      const before = getItemStock(validItem);
-      db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem); // valueはマイナス
-      success++;
-    } else {
-      failed++;
-      errors.push(`種別不明: ${line}`);
-    }
-  }
-
-  // エラー内容を生成
-  const resultText =
-    `登録完了: 成功 ${success}件, 失敗 ${failed}件。\n` +
-    (errors.length ? `エラー:\n${errors.join("\n")}` : "");
-
-  let replyText = "";
-  let files = [];
-
-  // Discordの1メッセージ最大4000文字制限対応
-  if (resultText.length <= 3900) {
-    replyText = resultText;
-  } else {
-    replyText =
-      `登録完了: 成功 ${success}件, 失敗 ${failed}件。\n` +
-      `（エラー詳細はファイル添付）\n` +
-      `エラー件数: ${errors.length}件\n` +
-      errors.slice(0, 10).join("\n");
-  }
-
-  // ファイル添付
-  if (errors.length > 0) {
-    const errorFileName = `bulk_error_${Date.now()}.txt`;
-    fs.writeFileSync(errorFileName, resultText, "utf-8");
-    files.push(new AttachmentBuilder(errorFileName));
-  }
-
-  // Discordに返信（メッセージ＋ファイル添付）
-  await interaction.reply({
-    content: replyText,
-    files: files
-  });
-
-  // 添付ファイル（一時ファイル）削除
-  files.forEach(f => {
-    if (f.attachment && typeof f.attachment === "string") {
-      fs.unlink(f.attachment, () => {});
-    }
-  });
+async function handleCsvImport(interaction) {
+  await interaction.reply({ content: "CSVファイルをこのコマンド実行後、**同じチャンネルに**添付してください。\nファイル名は何でもOKです。", ephemeral: true });
+  // ファイル受信はmessageCreateで処理
 }
+
+// メッセージでcsvファイルを受信してDB登録
+const CSV_IMPORT_STATE = {
+  waiting: false, // コマンド実行後のみ受付
+  channelId: null,
+  userId: null,
+};
+
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
+
+client.once("ready", () => {
+  console.log(`Logged in as ${client.user.tag}`);
+  registerCommands();
+});
 
 // コマンド登録
 async function registerCommands() {
@@ -261,15 +183,10 @@ async function registerCommands() {
     new SlashCommandBuilder()
       .setName("在庫")
       .setDescription("商品在庫を一覧表示"),
-    // bulkregister コマンド追加
+    // csvimportコマンド追加
     new SlashCommandBuilder()
-      .setName("bulkregister")
-      .setDescription("コピペで入出庫データを一括登録")
-      .addStringOption(option =>
-        option.setName("text")
-          .setDescription("タブ区切りで貼り付けた入出庫データ（行ごと）")
-          .setRequired(true)
-      )
+      .setName("csvimport")
+      .setDescription("入出庫CSVファイルを添付して一括登録")
   ].map(cmd => cmd.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -280,20 +197,16 @@ async function registerCommands() {
   console.log("Slash commands registered");
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
-
-client.once("ready", () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  registerCommands();
-});
-
+// コマンド・メッセージイベント
 client.on("interactionCreate", async interaction => {
   if (interaction.type !== InteractionType.ApplicationCommand) return;
   const uid = interaction.user.id;
 
-  // bulkregisterコマンド
-  if (interaction.commandName === "bulkregister") {
-    await handleBulkRegister(interaction);
+  if (interaction.commandName === "csvimport") {
+    CSV_IMPORT_STATE.waiting = true;
+    CSV_IMPORT_STATE.channelId = interaction.channel.id;
+    CSV_IMPORT_STATE.userId = interaction.user.id;
+    await handleCsvImport(interaction);
     return;
   }
 
@@ -408,6 +321,88 @@ client.on("interactionCreate", async interaction => {
     });
     await interaction.reply({ content: msg, ephemeral: true });
   }
+});
+
+// メッセージでcsvファイル添付を受信
+client.on("messageCreate", async message => {
+  // csvimportコマンド直後の同チャンネル・同ユーザーのみ受付
+  if (
+    !CSV_IMPORT_STATE.waiting ||
+    message.channel.id !== CSV_IMPORT_STATE.channelId ||
+    message.author.id !== CSV_IMPORT_STATE.userId
+  ) return;
+
+  if (!message.attachments || message.attachments.size === 0) return;
+  const attachment = message.attachments.first();
+  const url = attachment.url;
+  if (!url) return;
+  if (!/\.(csv|txt)$/i.test(attachment.name)) {
+    await message.reply("CSV形式（.csv/.txt）のみ対応しています。");
+    return;
+  }
+
+  let text;
+  try {
+    text = await fetch(url).then(r => r.text());
+  } catch (e) {
+    await message.reply("ファイルの取得に失敗しました。");
+    CSV_IMPORT_STATE.waiting = false;
+    return;
+  }
+
+  // CSVパース（1行目はヘッダーでもOK。カンマ区切りかタブ区切り）
+  const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
+  let success = 0, failed = 0, errors = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // 1行目がヘッダーならスキップ
+    if (i === 0 && /日付|date|user|item|type|value/i.test(line)) continue;
+    let parts = line.split(",");
+    if (parts.length < 5) parts = line.split("\t");
+    if (parts.length < 5) {
+      failed++;
+      errors.push(`パース失敗: ${line}`);
+      continue;
+    }
+    const [date, user, item, type, valueRaw] = parts;
+    let value = parseInt(valueRaw.replace(/[^0-9\-]/g, ""), 10);
+    if (isNaN(value)) {
+      failed++;
+      errors.push(`数値変換失敗: ${line}`);
+      continue;
+    }
+    let validItem = ITEM_LIST.includes(item) ? item : null;
+    if (!validItem) {
+      validItem = item;
+      const row = db.prepare("SELECT stock FROM item_stock WHERE item_name = ?").get(validItem);
+      if (!row) db.prepare("INSERT INTO item_stock (item_name, stock) VALUES (?, ?)").run(validItem, 0);
+      if (!ITEM_LIST.includes(validItem)) ITEM_LIST.push(validItem);
+    }
+    if (type === "在庫" || type === "入庫") {
+      if (type === "在庫") {
+        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(value, validItem);
+      } else {
+        const before = getItemStock(validItem);
+        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem);
+      }
+      db.prepare("INSERT INTO item_in_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
+      success++;
+    } else if (type === "出庫") {
+      const before = getItemStock(validItem);
+      db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem); // valueはマイナス
+      db.prepare("INSERT INTO item_out_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
+      success++;
+    } else {
+      failed++;
+      errors.push(`種別不明: ${line}`);
+    }
+  }
+
+  await message.reply(
+    `CSVインポート完了: 成功 ${success}件, 失敗 ${failed}件。\n` +
+    (errors.length ? `エラー:\n${errors.join("\n")}` : "")
+  );
+  CSV_IMPORT_STATE.waiting = false;
 });
 
 client.login(TOKEN);
