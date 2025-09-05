@@ -5,9 +5,7 @@ import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType
 import { REST } from "@discordjs/rest";
 import sqlite3 from "better-sqlite3";
 import fs from "fs";
-import path from "path";
 
-// 環境変数
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
@@ -17,6 +15,15 @@ const GACHA_COST = 10;
 const CURRENCY_UNIT = "デルタ";
 const ISSUE_ROLE_ID = process.env.ISSUE_ROLE_ID; // 発行権限ロールID
 const ISSUE_LOG_CHANNEL_ID = process.env.ISSUE_LOG_CHANNEL_ID; // ログ出力チャンネルID
+
+// 商品ラインナップ
+const ITEM_LIST = [
+  "フィッシュフライ",
+  "レモンサワー",
+  "蟹の足",
+  "マグロの握り",
+  "まぐろの中落ち"
+];
 
 // DB初期化
 const db = sqlite3(DB_FILE);
@@ -29,6 +36,39 @@ db.prepare(`
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `).run();
+// 商品在庫テーブル追加
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS item_stock (
+    item_name TEXT PRIMARY KEY,
+    stock INTEGER NOT NULL
+  )
+`).run();
+// 商品出庫履歴テーブル追加
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS item_out_log (
+    user_id TEXT,
+    item_name TEXT,
+    count INTEGER,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`).run();
+// 商品入庫履歴テーブル追加
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS item_in_log (
+    user_id TEXT,
+    item_name TEXT,
+    count INTEGER,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`).run();
+
+// 在庫初期化
+ITEM_LIST.forEach(item => {
+  const row = db.prepare("SELECT stock FROM item_stock WHERE item_name = ?").get(item);
+  if (!row) {
+    db.prepare("INSERT INTO item_stock (item_name, stock) VALUES (?, ?)").run(item, 0);
+  }
+});
 
 function getBalance(uid) {
   const row = db.prepare("SELECT balance FROM currency WHERE user_id = ?").get(uid);
@@ -55,6 +95,35 @@ function getGachaHistory(uid, limit = 10) {
   return db.prepare("SELECT result, timestamp FROM gacha_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?").all(uid, limit);
 }
 
+// 商品の在庫取得
+function getItemStock(item) {
+  const row = db.prepare("SELECT stock FROM item_stock WHERE item_name = ?").get(item);
+  return row ? row.stock : 0;
+}
+// 商品入庫
+function addItemStock(uid, item, count) {
+  const curr = getItemStock(item);
+  db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(curr + count, item);
+  db.prepare("INSERT INTO item_in_log (user_id, item_name, count) VALUES (?, ?, ?)").run(uid, item, count);
+  return curr + count;
+}
+// 商品出庫
+function outItemStock(uid, item, count) {
+  const curr = getItemStock(item);
+  const newStock = Math.max(0, curr - count);
+  db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(newStock, item);
+  db.prepare("INSERT INTO item_out_log (user_id, item_name, count) VALUES (?, ?, ?)").run(uid, item, count);
+  return newStock;
+}
+// 出庫履歴取得（最新10件）
+function getOutLog(uid, item, limit = 10) {
+  return db.prepare("SELECT count, timestamp FROM item_out_log WHERE user_id = ? AND item_name = ? ORDER BY timestamp DESC LIMIT ?").all(uid, item, limit);
+}
+// 入庫履歴取得（最新10件）
+function getInLog(uid, item, limit = 10) {
+  return db.prepare("SELECT count, timestamp FROM item_in_log WHERE user_id = ? AND item_name = ? ORDER BY timestamp DESC LIMIT ?").all(uid, item, limit);
+}
+
 // コマンド登録
 async function registerCommands() {
   const commands = [
@@ -75,7 +144,67 @@ async function registerCommands() {
       ),
     new SlashCommandBuilder()
       .setName("履歴")
-      .setDescription("自分のガチャ結果履歴を表示")
+      .setDescription("自分のガチャ結果履歴を表示"),
+    // 商品入庫コマンド
+    new SlashCommandBuilder()
+      .setName("入庫")
+      .setDescription("商品を入庫する")
+      .addStringOption(option =>
+        option
+          .setName("item")
+          .setDescription("商品名")
+          .setRequired(true)
+          .addChoices(...ITEM_LIST.map(item => ({ name: item, value: item })))
+      )
+      .addIntegerOption(option =>
+        option
+          .setName("count")
+          .setDescription("入庫数")
+          .setRequired(true)
+      ),
+    // 商品出庫コマンド
+    new SlashCommandBuilder()
+      .setName("出庫")
+      .setDescription("商品を出庫する")
+      .addStringOption(option =>
+        option
+          .setName("item")
+          .setDescription("商品名")
+          .setRequired(true)
+          .addChoices(...ITEM_LIST.map(item => ({ name: item, value: item })))
+      )
+      .addIntegerOption(option =>
+        option
+          .setName("count")
+          .setDescription("出庫数")
+          .setRequired(true)
+      ),
+    // 在庫確認
+    new SlashCommandBuilder()
+      .setName("在庫")
+      .setDescription("商品在庫を一覧表示"),
+    // 商品出庫履歴
+    new SlashCommandBuilder()
+      .setName("出庫履歴")
+      .setDescription("自分が出庫した商品の履歴を表示")
+      .addStringOption(option =>
+        option
+          .setName("item")
+          .setDescription("商品名")
+          .setRequired(true)
+          .addChoices(...ITEM_LIST.map(item => ({ name: item, value: item })))
+      ),
+    // 商品入庫履歴
+    new SlashCommandBuilder()
+      .setName("入庫履歴")
+      .setDescription("自分が入庫した商品の履歴を表示")
+      .addStringOption(option =>
+        option
+          .setName("item")
+          .setDescription("商品名")
+          .setRequired(true)
+          .addChoices(...ITEM_LIST.map(item => ({ name: item, value: item })))
+      )
   ].map(cmd => cmd.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -171,6 +300,84 @@ client.on("interactionCreate", async interaction => {
     } catch (e) {
       console.error("ログチャンネル送信失敗:", e);
     }
+  }
+
+  // 商品入庫コマンド
+  if (interaction.commandName === "入庫") {
+    const item = interaction.options.getString("item");
+    const count = interaction.options.getInteger("count");
+    if (!ITEM_LIST.includes(item)) {
+      await interaction.reply({ content: "無効な商品名です。", ephemeral: true });
+      return;
+    }
+    if (count <= 0) {
+      await interaction.reply({ content: "入庫数は1以上を指定してください。", ephemeral: true });
+      return;
+    }
+    const stock = addItemStock(uid, item, count);
+    await interaction.reply({ content: `${item}を${count}個入庫しました。在庫: ${stock}個`, ephemeral: true });
+  }
+
+  // 商品出庫コマンド
+  if (interaction.commandName === "出庫") {
+    const item = interaction.options.getString("item");
+    const count = interaction.options.getInteger("count");
+    if (!ITEM_LIST.includes(item)) {
+      await interaction.reply({ content: "無効な商品名です。", ephemeral: true });
+      return;
+    }
+    if (count <= 0) {
+      await interaction.reply({ content: "出庫数は1以上を指定してください。", ephemeral: true });
+      return;
+    }
+    const currStock = getItemStock(item);
+    if (currStock < count) {
+      await interaction.reply({ content: `在庫不足です。在庫: ${currStock}個`, ephemeral: true });
+      return;
+    }
+    const stock = outItemStock(uid, item, count);
+    await interaction.reply({ content: `${item}を${count}個出庫しました。在庫: ${stock}個`, ephemeral: true });
+  }
+
+  // 在庫一覧コマンド
+  if (interaction.commandName === "在庫") {
+    let msg = "【商品在庫一覧】\n";
+    ITEM_LIST.forEach(item => {
+      msg += `${item}: ${getItemStock(item)}個\n`;
+    });
+    await interaction.reply({ content: msg, ephemeral: true });
+  }
+
+  // 商品出庫履歴コマンド
+  if (interaction.commandName === "出庫履歴") {
+    const item = interaction.options.getString("item");
+    if (!ITEM_LIST.includes(item)) {
+      await interaction.reply({ content: "無効な商品名です。", ephemeral: true });
+      return;
+    }
+    const logs = getOutLog(uid, item, 10);
+    if (logs.length === 0) {
+      await interaction.reply({ content: "出庫履歴はありません。", ephemeral: true });
+      return;
+    }
+    const logText = logs.map(l => `出庫: ${l.count}個 (${l.timestamp})`).join("\n");
+    await interaction.reply({ content: `あなたの${item}出庫履歴（最新10件）:\n${logText}`, ephemeral: true });
+  }
+
+  // 商品入庫履歴コマンド
+  if (interaction.commandName === "入庫履歴") {
+    const item = interaction.options.getString("item");
+    if (!ITEM_LIST.includes(item)) {
+      await interaction.reply({ content: "無効な商品名です。", ephemeral: true });
+      return;
+    }
+    const logs = getInLog(uid, item, 10);
+    if (logs.length === 0) {
+      await interaction.reply({ content: "入庫履歴はありません。", ephemeral: true });
+      return;
+    }
+    const logText = logs.map(l => `入庫: ${l.count}個 (${l.timestamp})`).join("\n");
+    await interaction.reply({ content: `あなたの${item}入庫履歴（最新10件）:\n${logText}`, ephemeral: true });
   }
 });
 
