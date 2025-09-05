@@ -191,7 +191,11 @@ async function registerCommands() {
     // 添付型インポートコマンド
     new SlashCommandBuilder()
       .setName("importstock")
-      .setDescription("在庫CSVファイル（タブ区切り）を添付してインポート")
+      .setDescription("在庫CSVファイル（タブ区切り）を添付してインポート"),
+    // ここに新機能コマンド追加
+    new SlashCommandBuilder()
+      .setName("入出庫一覧")
+      .setDescription("全ユーザーの商品ごとの入庫・出庫数一覧を表示")
   ].map(cmd => cmd.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -213,6 +217,57 @@ client.on("interactionCreate", async interaction => {
   if (interaction.type !== InteractionType.ApplicationCommand) return;
   const uid = interaction.user.id;
 
+  // --- 新機能 入出庫一覧コマンド ---
+  if (interaction.commandName === "入出庫一覧") {
+    // item_in_log と item_out_log を集計
+    const inRows = db.prepare(`
+      SELECT user_id, item_name, SUM(count) AS in_count
+      FROM item_in_log
+      GROUP BY user_id, item_name
+    `).all();
+    const outRows = db.prepare(`
+      SELECT user_id, item_name, SUM(count) AS out_count
+      FROM item_out_log
+      GROUP BY user_id, item_name
+    `).all();
+
+    const summary = {};
+
+    for (const row of inRows) {
+      const key = `${row.user_id}|${row.item_name}`;
+      if (!summary[key]) summary[key] = { user_id: row.user_id, item_name: row.item_name, in_count: 0, out_count: 0 };
+      summary[key].in_count = row.in_count;
+    }
+    for (const row of outRows) {
+      const key = `${row.user_id}|${row.item_name}`;
+      if (!summary[key]) summary[key] = { user_id: row.user_id, item_name: row.item_name, in_count: 0, out_count: 0 };
+      summary[key].out_count = row.out_count;
+    }
+
+    // Discordのユーザー名取得
+    const userIds = [...new Set(Object.values(summary).map(r => r.user_id))];
+    const userMap = {};
+    for (const userId of userIds) {
+      try {
+        const member = await interaction.guild.members.fetch(userId);
+        userMap[userId] = member.user.username;
+      } catch (e) {
+        userMap[userId] = userId; // 取得失敗時はID表示
+      }
+    }
+
+    // メッセージ作成
+    let reply = "【全ユーザー商品別入出庫一覧】\nユーザー名 | 商品名 | 入庫数 | 出庫数\n";
+    for (const row of Object.values(summary)) {
+      reply += `${userMap[row.user_id]} | ${row.item_name} | ${row.in_count || 0} | ${row.out_count || 0}\n`;
+    }
+    if (reply.length > 1900) reply = reply.substring(0, 1900) + "\n...(省略)";
+    await interaction.reply({ content: `\`\`\`\n${reply}\n\`\`\``, ephemeral: true });
+    return;
+  }
+  // --- 新機能 ここまで ---
+
+  // 既存コマンド（省略せず全部書きます）
   if (interaction.commandName === "ガチャ") {
     let bal = getBalance(uid);
     if (bal < GACHA_COST) {
@@ -365,19 +420,15 @@ client.on("interactionCreate", async interaction => {
 // ファイル添付メッセージ受信処理
 client.on("messageCreate", async message => {
   if (!message.attachments || message.attachments.size === 0) return;
-  // インポートコマンド直後の添付のみ許可（roleなどで制限したい場合はここでユーザーIDを記録して限定可能）
-  // ここでは単純に「添付があればインポート」とする
   const attachment = message.attachments.first();
   const url = attachment.url;
   if (!url) return;
 
-  // ファイル拡張子確認（任意のテキストファイル可）
   if (!/\.(txt|csv|tsv)$/i.test(attachment.name)) {
     await message.reply("テキストファイル（.txt .csv .tsv）のみ対応しています。");
     return;
   }
 
-  // ファイル取得
   let text;
   try {
     text = await fetch(url).then(r => r.text());
@@ -385,11 +436,10 @@ client.on("messageCreate", async message => {
     await message.reply("ファイルの取得に失敗しました。");
     return;
   }
-  // CSV/TSVパース
+
   const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
   let success = 0, failed = 0, errors = [];
   for (const line of lines) {
-    // 日付/ユーザー/商品/種別/数量
     const parts = line.split("\t");
     if (parts.length < 5) {
       failed++;
