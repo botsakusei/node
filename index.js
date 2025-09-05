@@ -1,11 +1,10 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType, Attachment } from "discord.js";
+import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType } from "discord.js";
 import { REST } from "@discordjs/rest";
 import sqlite3 from "better-sqlite3";
 import fs from "fs";
-import fetch from "node-fetch";
 
 // 環境変数
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -187,15 +186,8 @@ async function registerCommands() {
           .setDescription("商品名")
           .setRequired(true)
           .addChoices(...ITEM_LIST.map(item => ({ name: item, value: item })))
-      ),
-    // 添付型インポートコマンド
-    new SlashCommandBuilder()
-      .setName("importstock")
-      .setDescription("在庫CSVファイル（タブ区切り）を添付してインポート"),
-    // ここに新機能コマンド追加
-    new SlashCommandBuilder()
-      .setName("入出庫一覧")
-      .setDescription("全ユーザーの商品ごとの入庫・出庫数一覧を表示")
+      )
+    // ★ importstockコマンドは削除済み
   ].map(cmd => cmd.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -217,57 +209,6 @@ client.on("interactionCreate", async interaction => {
   if (interaction.type !== InteractionType.ApplicationCommand) return;
   const uid = interaction.user.id;
 
-  // --- 新機能 入出庫一覧コマンド ---
-  if (interaction.commandName === "入出庫一覧") {
-    // item_in_log と item_out_log を集計
-    const inRows = db.prepare(`
-      SELECT user_id, item_name, SUM(count) AS in_count
-      FROM item_in_log
-      GROUP BY user_id, item_name
-    `).all();
-    const outRows = db.prepare(`
-      SELECT user_id, item_name, SUM(count) AS out_count
-      FROM item_out_log
-      GROUP BY user_id, item_name
-    `).all();
-
-    const summary = {};
-
-    for (const row of inRows) {
-      const key = `${row.user_id}|${row.item_name}`;
-      if (!summary[key]) summary[key] = { user_id: row.user_id, item_name: row.item_name, in_count: 0, out_count: 0 };
-      summary[key].in_count = row.in_count;
-    }
-    for (const row of outRows) {
-      const key = `${row.user_id}|${row.item_name}`;
-      if (!summary[key]) summary[key] = { user_id: row.user_id, item_name: row.item_name, in_count: 0, out_count: 0 };
-      summary[key].out_count = row.out_count;
-    }
-
-    // Discordのユーザー名取得
-    const userIds = [...new Set(Object.values(summary).map(r => r.user_id))];
-    const userMap = {};
-    for (const userId of userIds) {
-      try {
-        const member = await interaction.guild.members.fetch(userId);
-        userMap[userId] = member.user.username;
-      } catch (e) {
-        userMap[userId] = userId; // 取得失敗時はID表示
-      }
-    }
-
-    // メッセージ作成
-    let reply = "【全ユーザー商品別入出庫一覧】\nユーザー名 | 商品名 | 入庫数 | 出庫数\n";
-    for (const row of Object.values(summary)) {
-      reply += `${userMap[row.user_id]} | ${row.item_name} | ${row.in_count || 0} | ${row.out_count || 0}\n`;
-    }
-    if (reply.length > 1900) reply = reply.substring(0, 1900) + "\n...(省略)";
-    await interaction.reply({ content: `\`\`\`\n${reply}\n\`\`\``, ephemeral: true });
-    return;
-  }
-  // --- 新機能 ここまで ---
-
-  // 既存コマンド（省略せず全部書きます）
   if (interaction.commandName === "ガチャ") {
     let bal = getBalance(uid);
     if (bal < GACHA_COST) {
@@ -409,80 +350,6 @@ client.on("interactionCreate", async interaction => {
     const logText = logs.map(l => `入庫: ${l.count}個 (${l.timestamp})`).join("\n");
     await interaction.reply({ content: `あなたの${item}入庫履歴（最新10件）:\n${logText}`, ephemeral: true });
   }
-
-  // ファイル添付型インポート
-  if (interaction.commandName === "importstock") {
-    await interaction.reply({ content: "在庫ファイルをこのコマンド実行後、**同じチャンネルに**添付してください。\nファイル名は何でもOKです。", ephemeral: true });
-    // ファイル受信はmessageCreateで処理
-  }
-});
-
-// ファイル添付メッセージ受信処理
-client.on("messageCreate", async message => {
-  if (!message.attachments || message.attachments.size === 0) return;
-  const attachment = message.attachments.first();
-  const url = attachment.url;
-  if (!url) return;
-
-  if (!/\.(txt|csv|tsv)$/i.test(attachment.name)) {
-    await message.reply("テキストファイル（.txt .csv .tsv）のみ対応しています。");
-    return;
-  }
-
-  let text;
-  try {
-    text = await fetch(url).then(r => r.text());
-  } catch (e) {
-    await message.reply("ファイルの取得に失敗しました。");
-    return;
-  }
-
-  const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
-  let success = 0, failed = 0, errors = [];
-  for (const line of lines) {
-    const parts = line.split("\t");
-    if (parts.length < 5) {
-      failed++;
-      errors.push(`パース失敗: ${line}`);
-      continue;
-    }
-    const [date, user, item, type, valueRaw] = parts;
-    let value = parseInt(valueRaw.replace(/[^0-9\-]/g, ""), 10);
-    if (isNaN(value)) {
-      failed++;
-      errors.push(`数値変換失敗: ${line}`);
-      continue;
-    }
-    let validItem = ITEM_LIST.includes(item) ? item : null;
-    if (!validItem) {
-      validItem = item;
-      const row = db.prepare("SELECT stock FROM item_stock WHERE item_name = ?").get(validItem);
-      if (!row) db.prepare("INSERT INTO item_stock (item_name, stock) VALUES (?, ?)").run(validItem, 0);
-      if (!ITEM_LIST.includes(validItem)) ITEM_LIST.push(validItem);
-    }
-    if (type === "在庫" || type === "入庫") {
-      if (type === "在庫") {
-        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(value, validItem);
-      } else {
-        const before = getItemStock(validItem);
-        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem);
-      }
-      db.prepare("INSERT INTO item_in_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
-      success++;
-    } else if (type === "出庫") {
-      const before = getItemStock(validItem);
-      db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem); // valueはマイナス
-      db.prepare("INSERT INTO item_out_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
-      success++;
-    } else {
-      failed++;
-      errors.push(`種別不明: ${line}`);
-    }
-  }
-  await message.reply(
-    `インポート完了: 成功 ${success}件, 失敗 ${failed}件。\n` +
-    (errors.length ? `エラー:\n${errors.join("\n")}` : "")
-  );
 });
 
 client.login(TOKEN);
