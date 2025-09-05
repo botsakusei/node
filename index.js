@@ -1,10 +1,11 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType } from "discord.js";
+import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType, Attachment } from "discord.js";
 import { REST } from "@discordjs/rest";
 import sqlite3 from "better-sqlite3";
 import fs from "fs";
+import fetch from "node-fetch";
 
 // 環境変数
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -187,14 +188,10 @@ async function registerCommands() {
           .setRequired(true)
           .addChoices(...ITEM_LIST.map(item => ({ name: item, value: item })))
       ),
+    // 添付型インポートコマンド
     new SlashCommandBuilder()
       .setName("importstock")
-      .setDescription("在庫CSVテキストを一括インポート")
-      .addStringOption(option =>
-        option.setName("data")
-          .setDescription("インポートする在庫CSVテキスト（タブ区切り）")
-          .setRequired(true)
-      )
+      .setDescription("在庫CSVファイル（タブ区切り）を添付してインポート")
   ].map(cmd => cmd.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -205,7 +202,7 @@ async function registerCommands() {
   console.log("Slash commands registered");
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
@@ -358,61 +355,84 @@ client.on("interactionCreate", async interaction => {
     await interaction.reply({ content: `あなたの${item}入庫履歴（最新10件）:\n${logText}`, ephemeral: true });
   }
 
+  // ファイル添付型インポート
   if (interaction.commandName === "importstock") {
-    const rawData = interaction.options.getString("data");
-    if (!rawData) {
-      await interaction.reply({ content: "データがありません。", ephemeral: true });
-      return;
-    }
-    const lines = rawData.split("\n").map(line => line.trim()).filter(Boolean);
-    let success = 0, failed = 0, errors = [];
-    for (const line of lines) {
-      const parts = line.split("\t");
-      if (parts.length < 5) {
-        failed++;
-        errors.push(`パース失敗: ${line}`);
-        continue;
-      }
-      const [date, user, item, type, valueRaw] = parts;
-      let value = parseInt(valueRaw.replace(/[^0-9\-]/g, ""), 10);
-      if (isNaN(value)) {
-        failed++;
-        errors.push(`数値変換失敗: ${line}`);
-        continue;
-      }
-      let validItem = ITEM_LIST.includes(item) ? item : null;
-      if (!validItem) {
-        validItem = item;
-        const row = db.prepare("SELECT stock FROM item_stock WHERE item_name = ?").get(validItem);
-        if (!row) db.prepare("INSERT INTO item_stock (item_name, stock) VALUES (?, ?)").run(validItem, 0);
-        if (!ITEM_LIST.includes(validItem)) ITEM_LIST.push(validItem);
-      }
-      if (type === "在庫" || type === "入庫") {
-        if (type === "在庫") {
-          db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(value, validItem);
-        } else {
-          const before = getItemStock(validItem);
-          db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem);
-        }
-        db.prepare("INSERT INTO item_in_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
-        success++;
-      } else if (type === "出庫") {
-        const before = getItemStock(validItem);
-        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem); // valueはマイナス
-        db.prepare("INSERT INTO item_out_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
-        success++;
-      } else {
-        failed++;
-        errors.push(`種別不明: ${line}`);
-      }
-    }
-    await interaction.reply({
-      content:
-        `インポート完了: 成功 ${success}件, 失敗 ${failed}件。\n` +
-        (errors.length ? `エラー:\n${errors.join("\n")}` : ""),
-      ephemeral: true
-    });
+    await interaction.reply({ content: "在庫ファイルをこのコマンド実行後、**同じチャンネルに**添付してください。\nファイル名は何でもOKです。", ephemeral: true });
+    // ファイル受信はmessageCreateで処理
   }
+});
+
+// ファイル添付メッセージ受信処理
+client.on("messageCreate", async message => {
+  if (!message.attachments || message.attachments.size === 0) return;
+  // インポートコマンド直後の添付のみ許可（roleなどで制限したい場合はここでユーザーIDを記録して限定可能）
+  // ここでは単純に「添付があればインポート」とする
+  const attachment = message.attachments.first();
+  const url = attachment.url;
+  if (!url) return;
+
+  // ファイル拡張子確認（任意のテキストファイル可）
+  if (!/\.(txt|csv|tsv)$/i.test(attachment.name)) {
+    await message.reply("テキストファイル（.txt .csv .tsv）のみ対応しています。");
+    return;
+  }
+
+  // ファイル取得
+  let text;
+  try {
+    text = await fetch(url).then(r => r.text());
+  } catch (e) {
+    await message.reply("ファイルの取得に失敗しました。");
+    return;
+  }
+  // CSV/TSVパース
+  const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
+  let success = 0, failed = 0, errors = [];
+  for (const line of lines) {
+    // 日付/ユーザー/商品/種別/数量
+    const parts = line.split("\t");
+    if (parts.length < 5) {
+      failed++;
+      errors.push(`パース失敗: ${line}`);
+      continue;
+    }
+    const [date, user, item, type, valueRaw] = parts;
+    let value = parseInt(valueRaw.replace(/[^0-9\-]/g, ""), 10);
+    if (isNaN(value)) {
+      failed++;
+      errors.push(`数値変換失敗: ${line}`);
+      continue;
+    }
+    let validItem = ITEM_LIST.includes(item) ? item : null;
+    if (!validItem) {
+      validItem = item;
+      const row = db.prepare("SELECT stock FROM item_stock WHERE item_name = ?").get(validItem);
+      if (!row) db.prepare("INSERT INTO item_stock (item_name, stock) VALUES (?, ?)").run(validItem, 0);
+      if (!ITEM_LIST.includes(validItem)) ITEM_LIST.push(validItem);
+    }
+    if (type === "在庫" || type === "入庫") {
+      if (type === "在庫") {
+        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(value, validItem);
+      } else {
+        const before = getItemStock(validItem);
+        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem);
+      }
+      db.prepare("INSERT INTO item_in_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
+      success++;
+    } else if (type === "出庫") {
+      const before = getItemStock(validItem);
+      db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem); // valueはマイナス
+      db.prepare("INSERT INTO item_out_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
+      success++;
+    } else {
+      failed++;
+      errors.push(`種別不明: ${line}`);
+    }
+  }
+  await message.reply(
+    `インポート完了: 成功 ${success}件, 失敗 ${failed}件。\n` +
+    (errors.length ? `エラー:\n${errors.join("\n")}` : "")
+  );
 });
 
 client.login(TOKEN);
