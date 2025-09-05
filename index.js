@@ -5,7 +5,9 @@ import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType
 import { REST } from "@discordjs/rest";
 import sqlite3 from "better-sqlite3";
 import fs from "fs";
-import { createCanvas } from "canvas";
+
+// ※ canvas依存を削除しました
+// import { createCanvas } from "canvas"; ←この行を削除
 
 // 環境変数
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -106,7 +108,7 @@ function outItemStock(uid, item, count, date = null) {
   return newStock;
 }
 
-// bulkregister コマンド実装（コピペデータ一括登録＋ファイル/画像添付）
+// bulkregister コマンド実装（コピペデータ一括登録＋エラーをファイル添付）
 async function handleBulkRegister(interaction) {
   const text = interaction.options.getString("text");
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
@@ -177,7 +179,7 @@ async function handleBulkRegister(interaction) {
   } else {
     replyText =
       `登録完了: 成功 ${success}件, 失敗 ${failed}件。\n` +
-      `（エラー詳細はファイル・画像添付）\n` +
+      `（エラー詳細はファイル添付）\n` +
       `エラー件数: ${errors.length}件\n` +
       errors.slice(0, 10).join("\n");
   }
@@ -187,52 +189,6 @@ async function handleBulkRegister(interaction) {
     const errorFileName = `bulk_error_${Date.now()}.txt`;
     fs.writeFileSync(errorFileName, resultText, "utf-8");
     files.push(new AttachmentBuilder(errorFileName));
-  }
-
-  // 画像添付
-  if (errors.length > 0) {
-    const maxLines = Math.min(errors.length + 3, 100); // タイトル＋エラー数＋空行＋最大エラー100件
-    const width = 900;
-    const height = 30 * maxLines + 30;
-    const canvas = createCanvas(width, height);
-    const ctx = canvas.getContext("2d");
-
-    // 背景
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, width, height);
-
-    // タイトル
-    ctx.font = "bold 26px 'sans-serif'";
-    ctx.fillStyle = "#222";
-    ctx.fillText(`登録完了: 成功 ${success}件, 失敗 ${failed}件`, 20, 28);
-
-    // エラー件数
-    ctx.font = "20px 'sans-serif'";
-    ctx.fillStyle = "#c00";
-    ctx.fillText(`エラー: ${errors.length}件`, 20, 58);
-
-    // エラー詳細
-    ctx.font = "17px 'monospace'";
-    ctx.fillStyle = "#222";
-    let y = 90;
-    for (let i = 0; i < Math.min(errors.length, 100); i++) {
-      ctx.fillText(errors[i], 20, y);
-      y += 26;
-    }
-    if (errors.length > 100) {
-      ctx.fillStyle = "#c00";
-      ctx.fillText("...(省略)", 20, y);
-    }
-
-    // PNG画像として一時ファイル保存
-    const imageFileName = `bulk_error_${Date.now()}.png`;
-    const out = fs.createWriteStream(imageFileName);
-    const stream = canvas.createPNGStream();
-    await new Promise(resolve => {
-      stream.pipe(out);
-      out.on("finish", resolve);
-    });
-    files.push(new AttachmentBuilder(imageFileName));
   }
 
   // Discordに返信（メッセージ＋ファイル添付）
