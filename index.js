@@ -104,12 +104,6 @@ function outItemStock(uid, item, count, date = null) {
   db.prepare("INSERT INTO item_out_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(uid, item, count, date || new Date().toISOString());
   return newStock;
 }
-function getOutLog(uid, item, limit = 10) {
-  return db.prepare("SELECT count, timestamp FROM item_out_log WHERE user_id = ? AND item_name = ? ORDER BY timestamp DESC LIMIT ?").all(uid, item, limit);
-}
-function getInLog(uid, item, limit = 10) {
-  return db.prepare("SELECT count, timestamp FROM item_in_log WHERE user_id = ? AND item_name = ? ORDER BY timestamp DESC LIMIT ?").all(uid, item, limit);
-}
 
 // コマンド登録
 async function registerCommands() {
@@ -166,28 +160,8 @@ async function registerCommands() {
       ),
     new SlashCommandBuilder()
       .setName("在庫")
-      .setDescription("商品在庫を一覧表示"),
-    new SlashCommandBuilder()
-      .setName("出庫履歴")
-      .setDescription("自分が出庫した商品の履歴を表示")
-      .addStringOption(option =>
-        option
-          .setName("item")
-          .setDescription("商品名")
-          .setRequired(true)
-          .addChoices(...ITEM_LIST.map(item => ({ name: item, value: item })))
-      ),
-    new SlashCommandBuilder()
-      .setName("入庫履歴")
-      .setDescription("自分が入庫した商品の履歴を表示")
-      .addStringOption(option =>
-        option
-          .setName("item")
-          .setDescription("商品名")
-          .setRequired(true)
-          .addChoices(...ITEM_LIST.map(item => ({ name: item, value: item })))
-      )
-    // ★ importstockコマンドは削除済み
+      .setDescription("商品在庫を一覧表示")
+    // ★ 入庫履歴・出庫履歴コマンドは削除済み
   ].map(cmd => cmd.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -319,36 +293,6 @@ client.on("interactionCreate", async interaction => {
       msg += `${item}: ${getItemStock(item)}個\n`;
     });
     await interaction.reply({ content: msg, ephemeral: true });
-  }
-
-  if (interaction.commandName === "出庫履歴") {
-    const item = interaction.options.getString("item");
-    if (!ITEM_LIST.includes(item)) {
-      await interaction.reply({ content: "無効な商品名です。", ephemeral: true });
-      return;
-    }
-    const logs = getOutLog(uid, item, 10);
-    if (logs.length === 0) {
-      await interaction.reply({ content: "出庫履歴はありません。", ephemeral: true });
-      return;
-    }
-    const logText = logs.map(l => `出庫: ${l.count}個 (${l.timestamp})`).join("\n");
-    await interaction.reply({ content: `あなたの${item}出庫履歴（最新10件）:\n${logText}`, ephemeral: true });
-  }
-
-  if (interaction.commandName === "入庫履歴") {
-    const item = interaction.options.getString("item");
-    if (!ITEM_LIST.includes(item)) {
-      await interaction.reply({ content: "無効な商品名です。", ephemeral: true });
-      return;
-    }
-    const logs = getInLog(uid, item, 10);
-    if (logs.length === 0) {
-      await interaction.reply({ content: "入庫履歴はありません。", ephemeral: true });
-      return;
-    }
-    const logText = logs.map(l => `入庫: ${l.count}個 (${l.timestamp})`).join("\n");
-    await interaction.reply({ content: `あなたの${item}入庫履歴（最新10件）:\n${logText}`, ephemeral: true });
   }
 });
 
