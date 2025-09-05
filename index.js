@@ -181,14 +181,24 @@ async function registerCommands() {
     new SlashCommandBuilder()
       .setName("在庫")
       .setDescription("商品在庫を一覧表示"),
-    // csvimportコマンド追加
     new SlashCommandBuilder()
       .setName("csvimport")
       .setDescription("入出庫CSVファイルを添付して一括登録"),
-    // userlogimgコマンド追加
+    new SlashCommandBuilder()
+      .setName("usernames")
+      .setDescription("DBに記載されているメンバーの名前(ユーザー名)をすべて出力"),
     new SlashCommandBuilder()
       .setName("userlogimg")
-      .setDescription("自分の入庫・出庫数をテキストで出力")
+      .setDescription("指定した名前の入庫・出庫数をテキストで出力")
+      .addStringOption(option =>
+        option
+          .setName("name")
+          .setDescription("集計するユーザー名（CSVのuser列と一致）")
+          .setRequired(true)
+      ),
+    new SlashCommandBuilder()
+      .setName("alluserlog")
+      .setDescription("DBに登録された全ユーザー分の入庫・出庫数を分割して出力")
   ].map(cmd => cmd.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -213,15 +223,42 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // userlogimgコマンド（テキストで複数回に分割して出力）
-  if (interaction.commandName === "userlogimg") {
-    // 入庫・出庫集計
-    let inlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_in_log WHERE user_id = ? GROUP BY item_name").all(uid);
-    let outlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_out_log WHERE user_id = ? GROUP BY item_name").all(uid);
-
-    // アイテムごとに入庫・出庫数表示
+  // usernamesコマンド（DBに記載されているメンバー名一覧を出力）
+  if (interaction.commandName === "usernames") {
+    let names = db.prepare("SELECT DISTINCT user_id FROM item_in_log UNION SELECT DISTINCT user_id FROM item_out_log").all();
+    if (names.length === 0) {
+      await interaction.reply({ content: "DBに登録されたメンバーがいません。" });
+      return;
+    }
+    let msg = "DBに記載されているメンバー（user_id列＝CSVのuser列）一覧:\n";
+    for (const obj of names) {
+      msg += `${obj.user_id}\n`;
+    }
+    // 2000文字制限対応
     let msgArray = [];
-    let msg = `ユーザー: ${interaction.user.username}\n商品名      入庫数    出庫数\n`;
+    while (msg.length > 1800) {
+      msgArray.push(msg.slice(0, 1800));
+      msg = msg.slice(1800);
+    }
+    if (msg.length > 0) msgArray.push(msg);
+    for (let i = 0; i < msgArray.length; i++) {
+      if (i === 0) {
+        await interaction.reply({ content: msgArray[i] });
+      } else {
+        await interaction.followUp({ content: msgArray[i] });
+      }
+    }
+    return;
+  }
+
+  // userlogimgコマンド（指定した名前で入庫・出庫数を出力）
+  if (interaction.commandName === "userlogimg") {
+    const inputName = interaction.options.getString("name");
+    let inlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_in_log WHERE user_id = ? GROUP BY item_name").all(inputName);
+    let outlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_out_log WHERE user_id = ? GROUP BY item_name").all(inputName);
+
+    let msgArray = [];
+    let msg = `ユーザー: ${inputName}\n商品名      入庫数    出庫数\n`;
 
     for (let item of ITEM_LIST) {
       const inObj = inlog.find(obj => obj.item_name === item);
@@ -230,7 +267,6 @@ client.on("interactionCreate", async interaction => {
       const outSum = outObj ? outObj.sum : 0;
       msg += `${item.padEnd(12)} ${String(inSum).padStart(6)} ${String(outSum).padStart(6)}\n`;
 
-      // Discordのメッセージ文字数制限に備え分割（2000文字ごと）
       if (msg.length > 1800) {
         msgArray.push(msg);
         msg = "";
@@ -240,6 +276,41 @@ client.on("interactionCreate", async interaction => {
 
     for (let i = 0; i < msgArray.length; i++) {
       if (i == 0) {
+        await interaction.reply({ content: msgArray[i] });
+      } else {
+        await interaction.followUp({ content: msgArray[i] });
+      }
+    }
+    return;
+  }
+
+  // alluserlogコマンド（全ユーザー分分割して出力）
+  if (interaction.commandName === "alluserlog") {
+    let allNames = db.prepare("SELECT DISTINCT user_id FROM item_in_log UNION SELECT DISTINCT user_id FROM item_out_log").all();
+    if (allNames.length === 0) {
+      await interaction.reply("登録データがありません。");
+      return;
+    }
+
+    let msgArray = [];
+    for (const obj of allNames) {
+      const name = obj.user_id;
+      let inlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_in_log WHERE user_id = ? GROUP BY item_name").all(name);
+      let outlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_out_log WHERE user_id = ? GROUP BY item_name").all(name);
+
+      let msg = `ユーザー: ${name}\n商品名      入庫数    出庫数\n`;
+      for (let item of ITEM_LIST) {
+        const inObj = inlog.find(obj => obj.item_name === item);
+        const outObj = outlog.find(obj => obj.item_name === item);
+        const inSum = inObj ? inObj.sum : 0;
+        const outSum = outObj ? outObj.sum : 0;
+        msg += `${item.padEnd(12)} ${String(inSum).padStart(6)} ${String(outSum).padStart(6)}\n`;
+      }
+      msgArray.push(msg);
+    }
+
+    for (let i = 0; i < msgArray.length; i++) {
+      if (i === 0) {
         await interaction.reply({ content: msgArray[i] });
       } else {
         await interaction.followUp({ content: msgArray[i] });
