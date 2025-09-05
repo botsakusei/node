@@ -6,6 +6,7 @@ import { REST } from "@discordjs/rest";
 import sqlite3 from "better-sqlite3";
 import fs from "fs";
 
+// 環境変数
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
@@ -13,8 +14,8 @@ const DB_FILE = "delta_currency.db";
 const GACHA_ANIMATION_PATH = "free_gacha_animation.gif";
 const GACHA_COST = 10;
 const CURRENCY_UNIT = "デルタ";
-const ISSUE_ROLE_ID = process.env.ISSUE_ROLE_ID; // 発行権限ロールID
-const ISSUE_LOG_CHANNEL_ID = process.env.ISSUE_LOG_CHANNEL_ID; // ログ出力チャンネルID
+const ISSUE_ROLE_ID = process.env.ISSUE_ROLE_ID;
+const ISSUE_LOG_CHANNEL_ID = process.env.ISSUE_LOG_CHANNEL_ID;
 
 // 商品ラインナップ
 const ITEM_LIST = [
@@ -28,7 +29,6 @@ const ITEM_LIST = [
 // DB初期化
 const db = sqlite3(DB_FILE);
 db.prepare(`CREATE TABLE IF NOT EXISTS currency (user_id TEXT PRIMARY KEY, balance INTEGER NOT NULL)`).run();
-// ガチャ履歴テーブル追加
 db.prepare(`
   CREATE TABLE IF NOT EXISTS gacha_history (
     user_id TEXT,
@@ -36,14 +36,12 @@ db.prepare(`
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `).run();
-// 商品在庫テーブル追加
 db.prepare(`
   CREATE TABLE IF NOT EXISTS item_stock (
     item_name TEXT PRIMARY KEY,
     stock INTEGER NOT NULL
   )
 `).run();
-// 商品出庫履歴テーブル追加
 db.prepare(`
   CREATE TABLE IF NOT EXISTS item_out_log (
     user_id TEXT,
@@ -52,7 +50,6 @@ db.prepare(`
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `).run();
-// 商品入庫履歴テーブル追加
 db.prepare(`
   CREATE TABLE IF NOT EXISTS item_in_log (
     user_id TEXT,
@@ -84,42 +81,32 @@ function subBalance(uid, amt) {
   db.prepare("UPDATE currency SET balance = ? WHERE user_id = ?").run(n, uid);
   return n;
 }
-
-// ガチャ履歴保存
 function addGachaHistory(uid, result) {
   db.prepare("INSERT INTO gacha_history (user_id, result) VALUES (?, ?)").run(uid, result);
 }
-
-// ガチャ履歴取得（最新10件）
 function getGachaHistory(uid, limit = 10) {
   return db.prepare("SELECT result, timestamp FROM gacha_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?").all(uid, limit);
 }
-
-// 商品の在庫取得
 function getItemStock(item) {
   const row = db.prepare("SELECT stock FROM item_stock WHERE item_name = ?").get(item);
   return row ? row.stock : 0;
 }
-// 商品入庫
-function addItemStock(uid, item, count) {
+function addItemStock(uid, item, count, date = null) {
   const curr = getItemStock(item);
   db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(curr + count, item);
-  db.prepare("INSERT INTO item_in_log (user_id, item_name, count) VALUES (?, ?, ?)").run(uid, item, count);
+  db.prepare("INSERT INTO item_in_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(uid, item, count, date || new Date().toISOString());
   return curr + count;
 }
-// 商品出庫
-function outItemStock(uid, item, count) {
+function outItemStock(uid, item, count, date = null) {
   const curr = getItemStock(item);
   const newStock = Math.max(0, curr - count);
   db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(newStock, item);
-  db.prepare("INSERT INTO item_out_log (user_id, item_name, count) VALUES (?, ?, ?)").run(uid, item, count);
+  db.prepare("INSERT INTO item_out_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(uid, item, count, date || new Date().toISOString());
   return newStock;
 }
-// 出庫履歴取得（最新10件）
 function getOutLog(uid, item, limit = 10) {
   return db.prepare("SELECT count, timestamp FROM item_out_log WHERE user_id = ? AND item_name = ? ORDER BY timestamp DESC LIMIT ?").all(uid, item, limit);
 }
-// 入庫履歴取得（最新10件）
 function getInLog(uid, item, limit = 10) {
   return db.prepare("SELECT count, timestamp FROM item_in_log WHERE user_id = ? AND item_name = ? ORDER BY timestamp DESC LIMIT ?").all(uid, item, limit);
 }
@@ -145,7 +132,6 @@ async function registerCommands() {
     new SlashCommandBuilder()
       .setName("履歴")
       .setDescription("自分のガチャ結果履歴を表示"),
-    // 商品入庫コマンド
     new SlashCommandBuilder()
       .setName("入庫")
       .setDescription("商品を入庫する")
@@ -162,7 +148,6 @@ async function registerCommands() {
           .setDescription("入庫数")
           .setRequired(true)
       ),
-    // 商品出庫コマンド
     new SlashCommandBuilder()
       .setName("出庫")
       .setDescription("商品を出庫する")
@@ -179,11 +164,9 @@ async function registerCommands() {
           .setDescription("出庫数")
           .setRequired(true)
       ),
-    // 在庫確認
     new SlashCommandBuilder()
       .setName("在庫")
       .setDescription("商品在庫を一覧表示"),
-    // 商品出庫履歴
     new SlashCommandBuilder()
       .setName("出庫履歴")
       .setDescription("自分が出庫した商品の履歴を表示")
@@ -194,7 +177,6 @@ async function registerCommands() {
           .setRequired(true)
           .addChoices(...ITEM_LIST.map(item => ({ name: item, value: item })))
       ),
-    // 商品入庫履歴
     new SlashCommandBuilder()
       .setName("入庫履歴")
       .setDescription("自分が入庫した商品の履歴を表示")
@@ -204,6 +186,14 @@ async function registerCommands() {
           .setDescription("商品名")
           .setRequired(true)
           .addChoices(...ITEM_LIST.map(item => ({ name: item, value: item })))
+      ),
+    new SlashCommandBuilder()
+      .setName("importstock")
+      .setDescription("在庫CSVテキストを一括インポート")
+      .addStringOption(option =>
+        option.setName("data")
+          .setDescription("インポートする在庫CSVテキスト（タブ区切り）")
+          .setRequired(true)
       )
   ].map(cmd => cmd.toJSON());
 
@@ -215,7 +205,6 @@ async function registerCommands() {
   console.log("Slash commands registered");
 }
 
-// Bot本体
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 
 client.once("ready", () => {
@@ -227,7 +216,6 @@ client.on("interactionCreate", async interaction => {
   if (interaction.type !== InteractionType.ApplicationCommand) return;
   const uid = interaction.user.id;
 
-  // ガチャコマンド
   if (interaction.commandName === "ガチャ") {
     let bal = getBalance(uid);
     if (bal < GACHA_COST) {
@@ -249,19 +237,17 @@ client.on("interactionCreate", async interaction => {
     }
     await new Promise(r => setTimeout(r, 2000));
     const result = Math.floor(Math.random() * 100) + 1;
-    addGachaHistory(uid, result); // 履歴保存
+    addGachaHistory(uid, result);
     await interaction.followUp(`✨結果: ${result}！残高: ${nb}${CURRENCY_UNIT}`);
   }
 
-  // 残高コマンド（自分だけ見えるように）
   if (interaction.commandName === "残高") {
     let bal = getBalance(uid);
     await interaction.reply({ content: `${interaction.user} 残高: ${bal}${CURRENCY_UNIT}`, ephemeral: true });
   }
 
-  // 履歴コマンド
   if (interaction.commandName === "履歴") {
-    const history = getGachaHistory(uid, 10); // 直近10件
+    const history = getGachaHistory(uid, 10);
     if (history.length === 0) {
       await interaction.reply({ content: "履歴はありません。", ephemeral: true });
       return;
@@ -270,9 +256,7 @@ client.on("interactionCreate", async interaction => {
     await interaction.reply({ content: `あなたのガチャ履歴（最新10件）:\n${historyText}`, ephemeral: true });
   }
 
-  // 発行コマンド（ロール所有者のみ）
   if (interaction.commandName === "発行") {
-    // ロールチェック
     const member = await interaction.guild.members.fetch(interaction.user.id);
     if (!member.roles.cache.has(ISSUE_ROLE_ID)) {
       await interaction.reply({ content: "あなたは発行権限がありません。", ephemeral: true });
@@ -287,7 +271,6 @@ client.on("interactionCreate", async interaction => {
     const nb = addBalance(targetUser.id, amount);
     await interaction.reply({ content: `${targetUser} に ${amount}${CURRENCY_UNIT} を発行しました。新残高: ${nb}${CURRENCY_UNIT}`, ephemeral: true });
 
-    // ログ出力
     try {
       const logChannel = await client.channels.fetch(ISSUE_LOG_CHANNEL_ID);
       await logChannel.send({
@@ -302,7 +285,6 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
-  // 商品入庫コマンド
   if (interaction.commandName === "入庫") {
     const item = interaction.options.getString("item");
     const count = interaction.options.getInteger("count");
@@ -318,7 +300,6 @@ client.on("interactionCreate", async interaction => {
     await interaction.reply({ content: `${item}を${count}個入庫しました。在庫: ${stock}個`, ephemeral: true });
   }
 
-  // 商品出庫コマンド
   if (interaction.commandName === "出庫") {
     const item = interaction.options.getString("item");
     const count = interaction.options.getInteger("count");
@@ -339,7 +320,6 @@ client.on("interactionCreate", async interaction => {
     await interaction.reply({ content: `${item}を${count}個出庫しました。在庫: ${stock}個`, ephemeral: true });
   }
 
-  // 在庫一覧コマンド
   if (interaction.commandName === "在庫") {
     let msg = "【商品在庫一覧】\n";
     ITEM_LIST.forEach(item => {
@@ -348,7 +328,6 @@ client.on("interactionCreate", async interaction => {
     await interaction.reply({ content: msg, ephemeral: true });
   }
 
-  // 商品出庫履歴コマンド
   if (interaction.commandName === "出庫履歴") {
     const item = interaction.options.getString("item");
     if (!ITEM_LIST.includes(item)) {
@@ -364,7 +343,6 @@ client.on("interactionCreate", async interaction => {
     await interaction.reply({ content: `あなたの${item}出庫履歴（最新10件）:\n${logText}`, ephemeral: true });
   }
 
-  // 商品入庫履歴コマンド
   if (interaction.commandName === "入庫履歴") {
     const item = interaction.options.getString("item");
     if (!ITEM_LIST.includes(item)) {
@@ -378,6 +356,62 @@ client.on("interactionCreate", async interaction => {
     }
     const logText = logs.map(l => `入庫: ${l.count}個 (${l.timestamp})`).join("\n");
     await interaction.reply({ content: `あなたの${item}入庫履歴（最新10件）:\n${logText}`, ephemeral: true });
+  }
+
+  if (interaction.commandName === "importstock") {
+    const rawData = interaction.options.getString("data");
+    if (!rawData) {
+      await interaction.reply({ content: "データがありません。", ephemeral: true });
+      return;
+    }
+    const lines = rawData.split("\n").map(line => line.trim()).filter(Boolean);
+    let success = 0, failed = 0, errors = [];
+    for (const line of lines) {
+      const parts = line.split("\t");
+      if (parts.length < 5) {
+        failed++;
+        errors.push(`パース失敗: ${line}`);
+        continue;
+      }
+      const [date, user, item, type, valueRaw] = parts;
+      let value = parseInt(valueRaw.replace(/[^0-9\-]/g, ""), 10);
+      if (isNaN(value)) {
+        failed++;
+        errors.push(`数値変換失敗: ${line}`);
+        continue;
+      }
+      let validItem = ITEM_LIST.includes(item) ? item : null;
+      if (!validItem) {
+        validItem = item;
+        const row = db.prepare("SELECT stock FROM item_stock WHERE item_name = ?").get(validItem);
+        if (!row) db.prepare("INSERT INTO item_stock (item_name, stock) VALUES (?, ?)").run(validItem, 0);
+        if (!ITEM_LIST.includes(validItem)) ITEM_LIST.push(validItem);
+      }
+      if (type === "在庫" || type === "入庫") {
+        if (type === "在庫") {
+          db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(value, validItem);
+        } else {
+          const before = getItemStock(validItem);
+          db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem);
+        }
+        db.prepare("INSERT INTO item_in_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
+        success++;
+      } else if (type === "出庫") {
+        const before = getItemStock(validItem);
+        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem); // valueはマイナス
+        db.prepare("INSERT INTO item_out_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
+        success++;
+      } else {
+        failed++;
+        errors.push(`種別不明: ${line}`);
+      }
+    }
+    await interaction.reply({
+      content:
+        `インポート完了: 成功 ${success}件, 失敗 ${failed}件。\n` +
+        (errors.length ? `エラー:\n${errors.join("\n")}` : ""),
+      ephemeral: true
+    });
   }
 });
 
