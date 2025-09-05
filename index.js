@@ -105,6 +105,58 @@ function outItemStock(uid, item, count, date = null) {
   return newStock;
 }
 
+// ★ bulkregister コマンド実装（コピペデータ一括登録）
+async function handleBulkRegister(interaction) {
+  const text = interaction.options.getString("text");
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  let success = 0, failed = 0, errors = [];
+  for (const line of lines) {
+    const parts = line.split("\t");
+    if (parts.length < 5) {
+      failed++;
+      errors.push(`パース失敗: ${line}`);
+      continue;
+    }
+    const [date, user, item, type, valueRaw] = parts;
+    let value = parseInt(valueRaw.replace(/[^0-9\-]/g, ""), 10);
+    if (isNaN(value)) {
+      failed++;
+      errors.push(`数値変換失敗: ${line}`);
+      continue;
+    }
+    // DBに商品追加（初見の場合）
+    let validItem = ITEM_LIST.includes(item) ? item : null;
+    if (!validItem) {
+      validItem = item;
+      const row = db.prepare("SELECT stock FROM item_stock WHERE item_name = ?").get(validItem);
+      if (!row) db.prepare("INSERT INTO item_stock (item_name, stock) VALUES (?, ?)").run(validItem, 0);
+      if (!ITEM_LIST.includes(validItem)) ITEM_LIST.push(validItem);
+    }
+    if (type === "在庫" || type === "入庫") {
+      db.prepare("INSERT INTO item_in_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
+      if (type === "在庫") {
+        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(value, validItem);
+      } else {
+        const before = getItemStock(validItem);
+        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem);
+      }
+      success++;
+    } else if (type === "出庫") {
+      db.prepare("INSERT INTO item_out_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
+      const before = getItemStock(validItem);
+      db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem); // valueはマイナス
+      success++;
+    } else {
+      failed++;
+      errors.push(`種別不明: ${line}`);
+    }
+  }
+  await interaction.reply(
+    `登録完了: 成功 ${success}件, 失敗 ${failed}件。\n` +
+    (errors.length ? `エラー:\n${errors.join("\n")}` : "")
+  );
+}
+
 // コマンド登録
 async function registerCommands() {
   const commands = [
@@ -160,8 +212,16 @@ async function registerCommands() {
       ),
     new SlashCommandBuilder()
       .setName("在庫")
-      .setDescription("商品在庫を一覧表示")
-    // ★ 入庫履歴・出庫履歴コマンドは削除済み
+      .setDescription("商品在庫を一覧表示"),
+    // ★ bulkregister コマンド追加
+    new SlashCommandBuilder()
+      .setName("bulkregister")
+      .setDescription("コピペで入出庫データを一括登録")
+      .addStringOption(option =>
+        option.setName("text")
+          .setDescription("タブ区切りで貼り付けた入出庫データ（行ごと）")
+          .setRequired(true)
+      )
   ].map(cmd => cmd.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -182,6 +242,12 @@ client.once("ready", () => {
 client.on("interactionCreate", async interaction => {
   if (interaction.type !== InteractionType.ApplicationCommand) return;
   const uid = interaction.user.id;
+
+  // bulkregisterコマンド
+  if (interaction.commandName === "bulkregister") {
+    await handleBulkRegister(interaction);
+    return;
+  }
 
   if (interaction.commandName === "ガチャ") {
     let bal = getBalance(uid);
