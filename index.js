@@ -1,10 +1,11 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType } from "discord.js";
+import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType, AttachmentBuilder } from "discord.js";
 import { REST } from "@discordjs/rest";
 import sqlite3 from "better-sqlite3";
 import fs from "fs";
+import { createCanvas } from "canvas";
 
 // 環境変数
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -105,13 +106,23 @@ function outItemStock(uid, item, count, date = null) {
   return newStock;
 }
 
-// ★ bulkregister コマンド実装（コピペデータ一括登録）
+// bulkregister コマンド実装（コピペデータ一括登録＋ファイル/画像添付）
 async function handleBulkRegister(interaction) {
   const text = interaction.options.getString("text");
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
   let success = 0, failed = 0, errors = [];
+
+  // 柔軟に区切り文字対応
+  const splitLine = (line) => {
+    let parts = line.split("\t");
+    if (parts.length < 5) {
+      parts = line.split(/[\s　,]+/); // 半角/全角スペース/カンマ
+    }
+    return parts;
+  };
+
   for (const line of lines) {
-    const parts = line.split("\t");
+    const parts = splitLine(line);
     if (parts.length < 5) {
       failed++;
       errors.push(`パース失敗: ${line}`);
@@ -151,10 +162,91 @@ async function handleBulkRegister(interaction) {
       errors.push(`種別不明: ${line}`);
     }
   }
-  await interaction.reply(
+
+  // エラー内容を生成
+  const resultText =
     `登録完了: 成功 ${success}件, 失敗 ${failed}件。\n` +
-    (errors.length ? `エラー:\n${errors.join("\n")}` : "")
-  );
+    (errors.length ? `エラー:\n${errors.join("\n")}` : "");
+
+  let replyText = "";
+  let files = [];
+
+  // Discordの1メッセージ最大4000文字制限対応
+  if (resultText.length <= 3900) {
+    replyText = resultText;
+  } else {
+    replyText =
+      `登録完了: 成功 ${success}件, 失敗 ${failed}件。\n` +
+      `（エラー詳細はファイル・画像添付）\n` +
+      `エラー件数: ${errors.length}件\n` +
+      errors.slice(0, 10).join("\n");
+  }
+
+  // ファイル添付
+  if (errors.length > 0) {
+    const errorFileName = `bulk_error_${Date.now()}.txt`;
+    fs.writeFileSync(errorFileName, resultText, "utf-8");
+    files.push(new AttachmentBuilder(errorFileName));
+  }
+
+  // 画像添付
+  if (errors.length > 0) {
+    const maxLines = Math.min(errors.length + 3, 100); // タイトル＋エラー数＋空行＋最大エラー100件
+    const width = 900;
+    const height = 30 * maxLines + 30;
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext("2d");
+
+    // 背景
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, width, height);
+
+    // タイトル
+    ctx.font = "bold 26px 'sans-serif'";
+    ctx.fillStyle = "#222";
+    ctx.fillText(`登録完了: 成功 ${success}件, 失敗 ${failed}件`, 20, 28);
+
+    // エラー件数
+    ctx.font = "20px 'sans-serif'";
+    ctx.fillStyle = "#c00";
+    ctx.fillText(`エラー: ${errors.length}件`, 20, 58);
+
+    // エラー詳細
+    ctx.font = "17px 'monospace'";
+    ctx.fillStyle = "#222";
+    let y = 90;
+    for (let i = 0; i < Math.min(errors.length, 100); i++) {
+      ctx.fillText(errors[i], 20, y);
+      y += 26;
+    }
+    if (errors.length > 100) {
+      ctx.fillStyle = "#c00";
+      ctx.fillText("...(省略)", 20, y);
+    }
+
+    // PNG画像として一時ファイル保存
+    const imageFileName = `bulk_error_${Date.now()}.png`;
+    const out = fs.createWriteStream(imageFileName);
+    const stream = canvas.createPNGStream();
+    await new Promise(resolve => {
+      stream.pipe(out);
+      out.on("finish", resolve);
+    });
+    files.push(new AttachmentBuilder(imageFileName));
+  }
+
+  // Discordに返信（メッセージ＋ファイル添付）
+  await interaction.reply({
+    content: replyText,
+    files: files
+  });
+
+  // 添付ファイル（一時ファイル）削除
+  files.forEach(f => {
+    if (f.attachment && typeof f.attachment === "string") {
+      fs.unlink(f.attachment, () => {});
+    }
+  });
 }
 
 // コマンド登録
@@ -213,7 +305,7 @@ async function registerCommands() {
     new SlashCommandBuilder()
       .setName("在庫")
       .setDescription("商品在庫を一覧表示"),
-    // ★ bulkregister コマンド追加
+    // bulkregister コマンド追加
     new SlashCommandBuilder()
       .setName("bulkregister")
       .setDescription("コピペで入出庫データを一括登録")
