@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType } from "discord.js";
+import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType, AttachmentBuilder } from "discord.js";
 import { REST } from "@discordjs/rest";
 import sqlite3 from "better-sqlite3";
 import fs from "fs";
@@ -68,7 +68,6 @@ ITEM_LIST.forEach(item => {
   }
 });
 
-// 関数定義（重複無し！）
 function getBalance(uid) {
   const row = db.prepare("SELECT balance FROM currency WHERE user_id = ?").get(uid);
   return row ? row.balance : 0;
@@ -107,7 +106,7 @@ function outItemStock(uid, item, count, date = null) {
   return newStock;
 }
 
-// csvimportコマンド（CSV添付で一括登録）
+// ---------- csvimportコマンド（CSV添付で一括登録） ----------
 async function handleCsvImport(interaction) {
   await interaction.reply({ content: "CSVファイルをこのコマンド実行後、**同じチャンネルに**添付してください。\nファイル名は何でもOKです。", ephemeral: true });
 }
@@ -129,24 +128,77 @@ client.once("ready", () => {
 // コマンド登録
 async function registerCommands() {
   const commands = [
-    new SlashCommandBuilder().setName("ガチャ").setDescription(`${GACHA_COST}${CURRENCY_UNIT}消費してガチャ`),
-    new SlashCommandBuilder().setName("残高").setDescription("自分の残高確認"),
-    new SlashCommandBuilder().setName("発行").setDescription(`${CURRENCY_UNIT}を指定ユーザーに発行`)
-      .addUserOption(option => option.setName("user").setDescription("発行先ユーザー").setRequired(true))
-      .addIntegerOption(option => option.setName("amount").setDescription(`発行する${CURRENCY_UNIT}量`).setRequired(true)),
-    new SlashCommandBuilder().setName("履歴").setDescription("自分のガチャ結果履歴を表示"),
-    new SlashCommandBuilder().setName("入庫").setDescription("商品を入庫する")
-      .addStringOption(option => option.setName("item").setDescription("商品名").setRequired(true).addChoices(...ITEM_LIST.map(item => ({ name: item, value: item }))))
-      .addIntegerOption(option => option.setName("count").setDescription("入庫数").setRequired(true)),
-    new SlashCommandBuilder().setName("出庫").setDescription("商品を出庫する")
-      .addStringOption(option => option.setName("item").setDescription("商品名").setRequired(true).addChoices(...ITEM_LIST.map(item => ({ name: item, value: item }))))
-      .addIntegerOption(option => option.setName("count").setDescription("出庫数").setRequired(true)),
-    new SlashCommandBuilder().setName("在庫").setDescription("商品在庫を一覧表示"),
-    new SlashCommandBuilder().setName("csvimport").setDescription("入出庫CSVファイルを添付して一括登録"),
-    new SlashCommandBuilder().setName("usernames").setDescription("DBに記載されているメンバーの名前(ユーザー名)をすべて出力"),
-    new SlashCommandBuilder().setName("userlogimg").setDescription("指定した名前の入庫・出庫数をテキストで出力")
-      .addStringOption(option => option.setName("name").setDescription("集計するユーザー名（CSVのuser列と一致）").setRequired(true)),
-    new SlashCommandBuilder().setName("alluserlog").setDescription("DBに登録された全ユーザー分の入庫・出庫数を分割して出力")
+    new SlashCommandBuilder()
+      .setName("ガチャ")
+      .setDescription(`${GACHA_COST}${CURRENCY_UNIT}消費してガチャ`),
+    new SlashCommandBuilder()
+      .setName("残高")
+      .setDescription("自分の残高確認"),
+    new SlashCommandBuilder()
+      .setName("発行")
+      .setDescription(`${CURRENCY_UNIT}を指定ユーザーに発行`)
+      .addUserOption(option =>
+        option.setName("user").setDescription("発行先ユーザー").setRequired(true)
+      )
+      .addIntegerOption(option =>
+        option.setName("amount").setDescription(`発行する${CURRENCY_UNIT}量`).setRequired(true)
+      ),
+    new SlashCommandBuilder()
+      .setName("履歴")
+      .setDescription("自分のガチャ結果履歴を表示"),
+    new SlashCommandBuilder()
+      .setName("入庫")
+      .setDescription("商品を入庫する")
+      .addStringOption(option =>
+        option
+          .setName("item")
+          .setDescription("商品名")
+          .setRequired(true)
+          .addChoices(...ITEM_LIST.map(item => ({ name: item, value: item })))
+      )
+      .addIntegerOption(option =>
+        option
+          .setName("count")
+          .setDescription("入庫数")
+          .setRequired(true)
+      ),
+    new SlashCommandBuilder()
+      .setName("出庫")
+      .setDescription("商品を出庫する")
+      .addStringOption(option =>
+        option
+          .setName("item")
+          .setDescription("商品名")
+          .setRequired(true)
+          .addChoices(...ITEM_LIST.map(item => ({ name: item, value: item })))
+      )
+      .addIntegerOption(option =>
+        option
+          .setName("count")
+          .setDescription("出庫数")
+          .setRequired(true)
+      ),
+    new SlashCommandBuilder()
+      .setName("在庫")
+      .setDescription("商品在庫を一覧表示"),
+    new SlashCommandBuilder()
+      .setName("csvimport")
+      .setDescription("入出庫CSVファイルを添付して一括登録"),
+    new SlashCommandBuilder()
+      .setName("usernames")
+      .setDescription("DBに記載されているメンバーの名前(ユーザー名)をすべて出力"),
+    new SlashCommandBuilder()
+      .setName("userlogimg")
+      .setDescription("指定した名前の入庫・出庫数をテキストで出力")
+      .addStringOption(option =>
+        option
+          .setName("name")
+          .setDescription("集計するユーザー名（CSVのuser列と一致）")
+          .setRequired(true)
+      ),
+    new SlashCommandBuilder()
+      .setName("alluserlog")
+      .setDescription("DBに登録された全ユーザー分の入庫・出庫数を分割して出力")
   ].map(cmd => cmd.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -171,7 +223,7 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // usernamesコマンド
+  // usernamesコマンド（DBに記載されているメンバー名一覧を出力）
   if (interaction.commandName === "usernames") {
     let names = db.prepare("SELECT DISTINCT user_id FROM item_in_log UNION SELECT DISTINCT user_id FROM item_out_log").all();
     if (names.length === 0) {
@@ -199,45 +251,26 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // userlogimgコマンド（指定した名前で入庫・出庫数を出力。見やすく揃えて表示）
+  // userlogimgコマンド（指定した名前で入庫・出庫数を出力）
   if (interaction.commandName === "userlogimg") {
     const inputName = interaction.options.getString("name");
     let inlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_in_log WHERE user_id = ? GROUP BY item_name").all(inputName);
     let outlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_out_log WHERE user_id = ? GROUP BY item_name").all(inputName);
 
-    function normalizeName(name) {
-      return name.replace(/[\u30a1-\u30f6]/g, s => String.fromCharCode(s.charCodeAt(0) - 0x60));
-    }
-    const normalizedItemList = ITEM_LIST.map(normalizeName);
-
-    let itemSums = {};
-    for (let normItem of normalizedItemList) {
-      itemSums[normItem] = { in: 0, out: 0 };
-    }
-    for (let obj of inlog) {
-      let norm = normalizeName(obj.item_name);
-      if (itemSums[norm]) itemSums[norm].in += obj.sum;
-      else itemSums[norm] = { in: obj.sum, out: 0 };
-    }
-    for (let obj of outlog) {
-      let norm = normalizeName(obj.item_name);
-      if (itemSums[norm]) itemSums[norm].out += obj.sum;
-      else itemSums[norm] = { in: 0, out: obj.sum };
-    }
-
-    let header = `ユーザー: ${inputName}\n`;
-    header += "商品名".padEnd(14) + "入庫数".padStart(8) + "出庫数".padStart(8) + "\n";
-    let msg = header;
-    for (let normItem of normalizedItemList) {
-      const sums = itemSums[normItem] || { in: 0, out: 0 };
-      let dispName = normItem.replace(/[\u3041-\u3096]/g, s => String.fromCharCode(s.charCodeAt(0) + 0x60));
-      msg += dispName.padEnd(14) + String(sums.in).padStart(8) + String(sums.out).padStart(8) + "\n";
-    }
-
     let msgArray = [];
-    while (msg.length > 1800) {
-      msgArray.push(msg.slice(0, 1800));
-      msg = msg.slice(1800);
+    let msg = `ユーザー: ${inputName}\n商品名      入庫数    出庫数\n`;
+
+    for (let item of ITEM_LIST) {
+      const inObj = inlog.find(obj => obj.item_name === item);
+      const outObj = outlog.find(obj => obj.item_name === item);
+      const inSum = inObj ? inObj.sum : 0;
+      const outSum = outObj ? outObj.sum : 0;
+      msg += `${item.padEnd(12)} ${String(inSum).padStart(6)} ${String(outSum).padStart(6)}\n`;
+
+      if (msg.length > 1800) {
+        msgArray.push(msg);
+        msg = "";
+      }
     }
     if (msg.length > 0) msgArray.push(msg);
 
@@ -251,7 +284,7 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // alluserlogコマンド（全ユーザー分分割して出力。見やすく揃えて表示）
+  // alluserlogコマンド（全ユーザー分分割して出力）
   if (interaction.commandName === "alluserlog") {
     let allNames = db.prepare("SELECT DISTINCT user_id FROM item_in_log UNION SELECT DISTINCT user_id FROM item_out_log").all();
     if (allNames.length === 0) {
@@ -259,39 +292,19 @@ client.on("interactionCreate", async interaction => {
       return;
     }
 
-    function normalizeName(name) {
-      return name.replace(/[\u30a1-\u30f6]/g, s => String.fromCharCode(s.charCodeAt(0) - 0x60));
-    }
-    const normalizedItemList = ITEM_LIST.map(normalizeName);
-
     let msgArray = [];
     for (const obj of allNames) {
       const name = obj.user_id;
       let inlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_in_log WHERE user_id = ? GROUP BY item_name").all(name);
       let outlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_out_log WHERE user_id = ? GROUP BY item_name").all(name);
 
-      let itemSums = {};
-      for (let normItem of normalizedItemList) {
-        itemSums[normItem] = { in: 0, out: 0 };
-      }
-      for (let obj of inlog) {
-        let norm = normalizeName(obj.item_name);
-        if (itemSums[norm]) itemSums[norm].in += obj.sum;
-        else itemSums[norm] = { in: obj.sum, out: 0 };
-      }
-      for (let obj of outlog) {
-        let norm = normalizeName(obj.item_name);
-        if (itemSums[norm]) itemSums[norm].out += obj.sum;
-        else itemSums[norm] = { in: 0, out: obj.sum };
-      }
-
-      let header = `ユーザー: ${name}\n`;
-      header += "商品名".padEnd(14) + "入庫数".padStart(8) + "出庫数".padStart(8) + "\n";
-      let msg = header;
-      for (let normItem of normalizedItemList) {
-        const sums = itemSums[normItem] || { in: 0, out: 0 };
-        let dispName = normItem.replace(/[\u3041-\u3096]/g, s => String.fromCharCode(s.charCodeAt(0) + 0x60));
-        msg += dispName.padEnd(14) + String(sums.in).padStart(8) + String(sums.out).padStart(8) + "\n";
+      let msg = `ユーザー: ${name}\n商品名      入庫数    出庫数\n`;
+      for (let item of ITEM_LIST) {
+        const inObj = inlog.find(obj => obj.item_name === item);
+        const outObj = outlog.find(obj => obj.item_name === item);
+        const inSum = inObj ? inObj.sum : 0;
+        const outSum = outObj ? outObj.sum : 0;
+        msg += `${item.padEnd(12)} ${String(inSum).padStart(6)} ${String(outSum).padStart(6)}\n`;
       }
       msgArray.push(msg);
     }
@@ -306,7 +319,6 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // ----- 既存の各種コマンド -----
   if (interaction.commandName === "ガチャ") {
     let bal = getBalance(uid);
     if (bal < GACHA_COST) {
@@ -422,6 +434,7 @@ client.on("interactionCreate", async interaction => {
 
 // メッセージでcsvファイル添付を受信
 client.on("messageCreate", async message => {
+  // csvimportコマンド直後の同チャンネル・同ユーザーのみ受付
   if (
     !CSV_IMPORT_STATE.waiting ||
     message.channel.id !== CSV_IMPORT_STATE.channelId ||
@@ -446,10 +459,12 @@ client.on("messageCreate", async message => {
     return;
   }
 
+  // CSVパース（1行目はヘッダーでもOK。カンマ区切りかタブ区切り）
   const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
   let success = 0, failed = 0, errors = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    // 1行目がヘッダーならスキップ
     if (i === 0 && /日付|date|user|item|type|value/i.test(line)) continue;
     let parts = line.split(",");
     if (parts.length < 5) parts = line.split("\t");
