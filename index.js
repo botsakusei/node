@@ -55,9 +55,8 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
-  // registerCommands(); ← 初回のみ実行
+  registerCommands(); // ← ここを有効化する！
 });
-
 client.on("interactionCreate", async interaction => {
   if (interaction.type !== InteractionType.ApplicationCommand) return;
   const uid = interaction.user.id;
