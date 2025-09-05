@@ -5,12 +5,13 @@ import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType
 import { REST } from "@discordjs/rest";
 import sqlite3 from "better-sqlite3";
 import fs from "fs";
+import { createCanvas, loadImage } from "canvas";
 import fetch from "node-fetch";
 
 // 環境変数
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
-const GUILD_ID = process.env.DISCORD_GUILD_ID;
+const GUILD_ID = process.env.GUILD_ID || process.env.DISCORD_GUILD_ID;
 const DB_FILE = "delta_currency.db";
 const GACHA_ANIMATION_PATH = "free_gacha_animation.gif";
 const GACHA_COST = 10;
@@ -106,16 +107,14 @@ function outItemStock(uid, item, count, date = null) {
   return newStock;
 }
 
-// ---------- 新機能：csvimportコマンド（CSV添付で一括登録） ----------
-
+// ---------- csvimportコマンド（CSV添付で一括登録） ----------
 async function handleCsvImport(interaction) {
   await interaction.reply({ content: "CSVファイルをこのコマンド実行後、**同じチャンネルに**添付してください。\nファイル名は何でもOKです。", ephemeral: true });
-  // ファイル受信はmessageCreateで処理
 }
 
 // メッセージでcsvファイルを受信してDB登録
 const CSV_IMPORT_STATE = {
-  waiting: false, // コマンド実行後のみ受付
+  waiting: false,
   channelId: null,
   userId: null,
 };
@@ -186,7 +185,11 @@ async function registerCommands() {
     // csvimportコマンド追加
     new SlashCommandBuilder()
       .setName("csvimport")
-      .setDescription("入出庫CSVファイルを添付して一括登録")
+      .setDescription("入出庫CSVファイルを添付して一括登録"),
+    // userlogimgコマンド追加
+    new SlashCommandBuilder()
+      .setName("userlogimg")
+      .setDescription("自分の入庫・出庫数を画像で出力")
   ].map(cmd => cmd.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -202,11 +205,78 @@ client.on("interactionCreate", async interaction => {
   if (interaction.type !== InteractionType.ApplicationCommand) return;
   const uid = interaction.user.id;
 
+  // csvimportコマンド
   if (interaction.commandName === "csvimport") {
     CSV_IMPORT_STATE.waiting = true;
     CSV_IMPORT_STATE.channelId = interaction.channel.id;
     CSV_IMPORT_STATE.userId = interaction.user.id;
     await handleCsvImport(interaction);
+    return;
+  }
+
+  // userlogimgコマンド（個人の入庫出庫数を画像で出力）
+  if (interaction.commandName === "userlogimg") {
+    await interaction.deferReply();
+
+    // 入庫・出庫集計
+    let inlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_in_log WHERE user_id = ? GROUP BY item_name").all(uid);
+    let outlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_out_log WHERE user_id = ? GROUP BY item_name").all(uid);
+
+    // 画像サイズ計算
+    const rowHeight = 36;
+    const itemCount = Math.max(inlog.length, outlog.length, ITEM_LIST.length);
+    const width = 520;
+    const height = 90 + rowHeight * itemCount;
+
+    // Canvas生成
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext("2d");
+
+    // 背景
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, width, height);
+
+    // ユーザー名
+    ctx.font = "bold 26px 'sans-serif'";
+    ctx.fillStyle = "#222";
+    ctx.fillText(`ユーザー: ${interaction.user.username}`, 22, 40);
+
+    // タイトル
+    ctx.font = "18px 'sans-serif'";
+    ctx.fillStyle = "#444";
+    ctx.fillText("商品名         入庫数    出庫数", 22, 70);
+
+    // アイテムごとに入庫・出庫数表示
+    ctx.font = "17px 'monospace'";
+    ctx.fillStyle = "#222";
+    let y = 100;
+    for (let item of ITEM_LIST) {
+      const inObj = inlog.find(obj => obj.item_name === item);
+      const outObj = outlog.find(obj => obj.item_name === item);
+      const inSum = inObj ? inObj.sum : 0;
+      const outSum = outObj ? outObj.sum : 0;
+      // 商品名パディング
+      let dispItem = item.padEnd(12, "　");
+      ctx.fillText(`${dispItem}   ${String(inSum).padStart(7)}   ${String(outSum).padStart(7)}`, 22, y);
+      y += rowHeight;
+    }
+
+    // PNG画像一時ファイル出力
+    const imgName = `userlogimg_${uid}_${Date.now()}.png`;
+    const out = fs.createWriteStream(imgName);
+    const stream = canvas.createPNGStream();
+    await new Promise(resolve => {
+      stream.pipe(out);
+      out.on("finish", resolve);
+    });
+
+    await interaction.followUp({
+      content: "あなたの入庫・出庫集計画像です",
+      files: [new AttachmentBuilder(imgName)]
+    });
+
+    // 一時ファイル削除
+    fs.unlink(imgName, () => {});
     return;
   }
 
