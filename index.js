@@ -5,7 +5,6 @@ import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType
 import { REST } from "@discordjs/rest";
 import sqlite3 from "better-sqlite3";
 import fs from "fs";
-import { createCanvas, loadImage } from "canvas";
 import fetch from "node-fetch";
 
 // 環境変数
@@ -189,7 +188,7 @@ async function registerCommands() {
     // userlogimgコマンド追加
     new SlashCommandBuilder()
       .setName("userlogimg")
-      .setDescription("自分の入庫・出庫数を画像で出力")
+      .setDescription("自分の入庫・出庫数をテキストで出力")
   ].map(cmd => cmd.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -214,69 +213,38 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // userlogimgコマンド（個人の入庫出庫数を画像で出力）
+  // userlogimgコマンド（テキストで複数回に分割して出力）
   if (interaction.commandName === "userlogimg") {
-    await interaction.deferReply();
-
     // 入庫・出庫集計
     let inlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_in_log WHERE user_id = ? GROUP BY item_name").all(uid);
     let outlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_out_log WHERE user_id = ? GROUP BY item_name").all(uid);
 
-    // 画像サイズ計算
-    const rowHeight = 36;
-    const itemCount = Math.max(inlog.length, outlog.length, ITEM_LIST.length);
-    const width = 520;
-    const height = 90 + rowHeight * itemCount;
-
-    // Canvas生成
-    const canvas = createCanvas(width, height);
-    const ctx = canvas.getContext("2d");
-
-    // 背景
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, width, height);
-
-    // ユーザー名
-    ctx.font = "bold 26px 'sans-serif'";
-    ctx.fillStyle = "#222";
-    ctx.fillText(`ユーザー: ${interaction.user.username}`, 22, 40);
-
-    // タイトル
-    ctx.font = "18px 'sans-serif'";
-    ctx.fillStyle = "#444";
-    ctx.fillText("商品名         入庫数    出庫数", 22, 70);
-
     // アイテムごとに入庫・出庫数表示
-    ctx.font = "17px 'monospace'";
-    ctx.fillStyle = "#222";
-    let y = 100;
+    let msgArray = [];
+    let msg = `ユーザー: ${interaction.user.username}\n商品名      入庫数    出庫数\n`;
+
     for (let item of ITEM_LIST) {
       const inObj = inlog.find(obj => obj.item_name === item);
       const outObj = outlog.find(obj => obj.item_name === item);
       const inSum = inObj ? inObj.sum : 0;
       const outSum = outObj ? outObj.sum : 0;
-      // 商品名パディング
-      let dispItem = item.padEnd(12, "　");
-      ctx.fillText(`${dispItem}   ${String(inSum).padStart(7)}   ${String(outSum).padStart(7)}`, 22, y);
-      y += rowHeight;
+      msg += `${item.padEnd(12)} ${String(inSum).padStart(6)} ${String(outSum).padStart(6)}\n`;
+
+      // Discordのメッセージ文字数制限に備え分割（2000文字ごと）
+      if (msg.length > 1800) {
+        msgArray.push(msg);
+        msg = "";
+      }
     }
+    if (msg.length > 0) msgArray.push(msg);
 
-    // PNG画像一時ファイル出力
-    const imgName = `userlogimg_${uid}_${Date.now()}.png`;
-    const out = fs.createWriteStream(imgName);
-    const stream = canvas.createPNGStream();
-    await new Promise(resolve => {
-      stream.pipe(out);
-      out.on("finish", resolve);
-    });
-
-    await interaction.followUp({
-      content: "あなたの入庫・出庫集計画像です",
-      files: [new AttachmentBuilder(imgName)]
-    });
-
-    // 一時ファイル削除
-    fs.unlink(imgName, () => {});
+    for (let i = 0; i < msgArray.length; i++) {
+      if (i == 0) {
+        await interaction.reply({ content: msgArray[i] });
+      } else {
+        await interaction.followUp({ content: msgArray[i] });
+      }
+    }
     return;
   }
 
