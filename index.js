@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType } from "discord.js";
+import { Client, GatewayIntentBits, SlashCommandBuilder, Routes, InteractionType, InteractionReplyFlags } from "discord.js";
 import { REST } from "@discordjs/rest";
 import sqlite3 from "better-sqlite3";
 import fs from "fs";
@@ -22,9 +22,9 @@ const ISSUE_LOG_CHANNEL_ID = process.env.ISSUE_LOG_CHANNEL_ID;
 const ITEM_LIST = [
   "フィッシュフライ",
   "レモンサワー",
-  "蟹の足",
-  "マグロの握り",
-  "まぐろの中落ち"
+  "蟹ノ足",
+  "マグロノ握リ",
+  "マグロノ中落チ"
 ];
 
 // DB初期化
@@ -109,7 +109,7 @@ function outItemStock(uid, item, count, date = null) {
 
 // csvimportコマンド（CSV添付で一括登録）
 async function handleCsvImport(interaction) {
-  await interaction.reply({ content: "CSVファイルをこのコマンド実行後、**同じチャンネルに**添付してください。\nファイル名は何でもOKです。", ephemeral: true });
+  await interaction.reply({ content: "CSVファイルをこのコマンド実行後、**同じチャンネルに**添付してください。\nファイル名は何でもOKです。", flags: InteractionReplyFlags.Ephemeral });
 }
 
 // メッセージでcsvファイルを受信してDB登録
@@ -121,7 +121,7 @@ const CSV_IMPORT_STATE = {
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
-client.once("ready", () => {
+client.once("clientReady", () => {
   console.log(`Logged in as ${client.user.tag}`);
   registerCommands();
 });
@@ -199,39 +199,42 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // userlogimgコマンド（指定した名前で入庫・出庫数を出力。見やすく揃えて表示）
+  // userlogimgコマンド（指定した名前で入庫・出庫数を出力。重複商品名を集計して1行にまとめて表示）
   if (interaction.commandName === "userlogimg") {
     const inputName = interaction.options.getString("name");
-    let inlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_in_log WHERE user_id = ? GROUP BY item_name").all(inputName);
-    let outlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_out_log WHERE user_id = ? GROUP BY item_name").all(inputName);
+    let inlog = db.prepare("SELECT item_name, count FROM item_in_log WHERE user_id = ?").all(inputName);
+    let outlog = db.prepare("SELECT item_name, count FROM item_out_log WHERE user_id = ?").all(inputName);
 
-    function normalizeName(name) {
-      return name.replace(/[\u30a1-\u30f6]/g, s => String.fromCharCode(s.charCodeAt(0) - 0x60));
-    }
-    const normalizedItemList = ITEM_LIST.map(normalizeName);
+    // 商品名統一（カタカナで表示順を固定）
+    const displayItems = [
+      "フィッシュフライ",
+      "レモンサワー",
+      "蟹ノ足",
+      "マグロノ握リ",
+      "マグロノ中落チ"
+    ];
 
+    // 商品ごとに入庫・出庫数を合算
     let itemSums = {};
-    for (let normItem of normalizedItemList) {
-      itemSums[normItem] = { in: 0, out: 0 };
+    for (let item of displayItems) {
+      itemSums[item] = { in: 0, out: 0 };
     }
     for (let obj of inlog) {
-      let norm = normalizeName(obj.item_name);
-      if (itemSums[norm]) itemSums[norm].in += obj.sum;
-      else itemSums[norm] = { in: obj.sum, out: 0 };
+      if (itemSums[obj.item_name] !== undefined) itemSums[obj.item_name].in += obj.count;
     }
     for (let obj of outlog) {
-      let norm = normalizeName(obj.item_name);
-      if (itemSums[norm]) itemSums[norm].out += obj.sum;
-      else itemSums[norm] = { in: 0, out: obj.sum };
+      if (itemSums[obj.item_name] !== undefined) itemSums[obj.item_name].out += obj.count;
     }
 
+    // 出力整形
     let header = `ユーザー: ${inputName}\n`;
     header += "商品名".padEnd(14) + "入庫数".padStart(8) + "出庫数".padStart(8) + "\n";
     let msg = header;
-    for (let normItem of normalizedItemList) {
-      const sums = itemSums[normItem] || { in: 0, out: 0 };
-      let dispName = normItem.replace(/[\u3041-\u3096]/g, s => String.fromCharCode(s.charCodeAt(0) + 0x60));
-      msg += dispName.padEnd(14) + String(sums.in).padStart(8) + String(sums.out).padStart(8) + "\n";
+    for (let item of displayItems) {
+      const sums = itemSums[item];
+      msg += item.padEnd(14) +
+             String(sums.in).padStart(8) +
+             String(sums.out).padStart(8) + "\n";
     }
 
     let msgArray = [];
@@ -251,7 +254,7 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // alluserlogコマンド（全ユーザー分分割して出力。見やすく揃えて表示）
+  // alluserlogコマンド（全ユーザー分分割して出力。重複商品名なしで1行に集計）
   if (interaction.commandName === "alluserlog") {
     let allNames = db.prepare("SELECT DISTINCT user_id FROM item_in_log UNION SELECT DISTINCT user_id FROM item_out_log").all();
     if (allNames.length === 0) {
@@ -259,39 +262,39 @@ client.on("interactionCreate", async interaction => {
       return;
     }
 
-    function normalizeName(name) {
-      return name.replace(/[\u30a1-\u30f6]/g, s => String.fromCharCode(s.charCodeAt(0) - 0x60));
-    }
-    const normalizedItemList = ITEM_LIST.map(normalizeName);
+    const displayItems = [
+      "フィッシュフライ",
+      "レモンサワー",
+      "蟹ノ足",
+      "マグロノ握リ",
+      "マグロノ中落チ"
+    ];
 
     let msgArray = [];
     for (const obj of allNames) {
       const name = obj.user_id;
-      let inlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_in_log WHERE user_id = ? GROUP BY item_name").all(name);
-      let outlog = db.prepare("SELECT item_name, SUM(count) as sum FROM item_out_log WHERE user_id = ? GROUP BY item_name").all(name);
+      let inlog = db.prepare("SELECT item_name, count FROM item_in_log WHERE user_id = ?").all(name);
+      let outlog = db.prepare("SELECT item_name, count FROM item_out_log WHERE user_id = ?").all(name);
 
       let itemSums = {};
-      for (let normItem of normalizedItemList) {
-        itemSums[normItem] = { in: 0, out: 0 };
+      for (let item of displayItems) {
+        itemSums[item] = { in: 0, out: 0 };
       }
       for (let obj of inlog) {
-        let norm = normalizeName(obj.item_name);
-        if (itemSums[norm]) itemSums[norm].in += obj.sum;
-        else itemSums[norm] = { in: obj.sum, out: 0 };
+        if (itemSums[obj.item_name] !== undefined) itemSums[obj.item_name].in += obj.count;
       }
       for (let obj of outlog) {
-        let norm = normalizeName(obj.item_name);
-        if (itemSums[norm]) itemSums[norm].out += obj.sum;
-        else itemSums[norm] = { in: 0, out: obj.sum };
+        if (itemSums[obj.item_name] !== undefined) itemSums[obj.item_name].out += obj.count;
       }
 
       let header = `ユーザー: ${name}\n`;
       header += "商品名".padEnd(14) + "入庫数".padStart(8) + "出庫数".padStart(8) + "\n";
       let msg = header;
-      for (let normItem of normalizedItemList) {
-        const sums = itemSums[normItem] || { in: 0, out: 0 };
-        let dispName = normItem.replace(/[\u3041-\u3096]/g, s => String.fromCharCode(s.charCodeAt(0) + 0x60));
-        msg += dispName.padEnd(14) + String(sums.in).padStart(8) + String(sums.out).padStart(8) + "\n";
+      for (let item of displayItems) {
+        const sums = itemSums[item];
+        msg += item.padEnd(14) +
+               String(sums.in).padStart(8) +
+               String(sums.out).padStart(8) + "\n";
       }
       msgArray.push(msg);
     }
@@ -310,7 +313,7 @@ client.on("interactionCreate", async interaction => {
   if (interaction.commandName === "ガチャ") {
     let bal = getBalance(uid);
     if (bal < GACHA_COST) {
-      await interaction.reply({ content: `残高不足！（${bal}${CURRENCY_UNIT}）`, ephemeral: true });
+      await interaction.reply({ content: `残高不足！（${bal}${CURRENCY_UNIT}）`, flags: InteractionReplyFlags.Ephemeral });
       return;
     }
     subBalance(uid, GACHA_COST);
@@ -334,33 +337,33 @@ client.on("interactionCreate", async interaction => {
 
   if (interaction.commandName === "残高") {
     let bal = getBalance(uid);
-    await interaction.reply({ content: `${interaction.user} 残高: ${bal}${CURRENCY_UNIT}`, ephemeral: true });
+    await interaction.reply({ content: `${interaction.user} 残高: ${bal}${CURRENCY_UNIT}`, flags: InteractionReplyFlags.Ephemeral });
   }
 
   if (interaction.commandName === "履歴") {
     const history = getGachaHistory(uid, 10);
     if (history.length === 0) {
-      await interaction.reply({ content: "履歴はありません。", ephemeral: true });
+      await interaction.reply({ content: "履歴はありません。", flags: InteractionReplyFlags.Ephemeral });
       return;
     }
     const historyText = history.map(h => `結果: ${h.result} (${h.timestamp})`).join("\n");
-    await interaction.reply({ content: `あなたのガチャ履歴（最新10件）:\n${historyText}`, ephemeral: true });
+    await interaction.reply({ content: `あなたのガチャ履歴（最新10件）:\n${historyText}`, flags: InteractionReplyFlags.Ephemeral });
   }
 
   if (interaction.commandName === "発行") {
     const member = await interaction.guild.members.fetch(interaction.user.id);
     if (!member.roles.cache.has(ISSUE_ROLE_ID)) {
-      await interaction.reply({ content: "あなたは発行権限がありません。", ephemeral: true });
+      await interaction.reply({ content: "あなたは発行権限がありません。", flags: InteractionReplyFlags.Ephemeral });
       return;
     }
     const targetUser = interaction.options.getUser("user");
     const amount = interaction.options.getInteger("amount");
     if (amount <= 0) {
-      await interaction.reply({ content: "発行額は1以上にしてください。", ephemeral: true });
+      await interaction.reply({ content: "発行額は1以上にしてください。", flags: InteractionReplyFlags.Ephemeral });
       return;
     }
     const nb = addBalance(targetUser.id, amount);
-    await interaction.reply({ content: `${targetUser} に ${amount}${CURRENCY_UNIT} を発行しました。新残高: ${nb}${CURRENCY_UNIT}`, ephemeral: true });
+    await interaction.reply({ content: `${targetUser} に ${amount}${CURRENCY_UNIT} を発行しました。新残高: ${nb}${CURRENCY_UNIT}`, flags: InteractionReplyFlags.Ephemeral });
 
     try {
       const logChannel = await client.channels.fetch(ISSUE_LOG_CHANNEL_ID);
@@ -380,35 +383,35 @@ client.on("interactionCreate", async interaction => {
     const item = interaction.options.getString("item");
     const count = interaction.options.getInteger("count");
     if (!ITEM_LIST.includes(item)) {
-      await interaction.reply({ content: "無効な商品名です。", ephemeral: true });
+      await interaction.reply({ content: "無効な商品名です。", flags: InteractionReplyFlags.Ephemeral });
       return;
     }
     if (count <= 0) {
-      await interaction.reply({ content: "入庫数は1以上を指定してください。", ephemeral: true });
+      await interaction.reply({ content: "入庫数は1以上を指定してください。", flags: InteractionReplyFlags.Ephemeral });
       return;
     }
     const stock = addItemStock(uid, item, count);
-    await interaction.reply({ content: `${item}を${count}個入庫しました。在庫: ${stock}個`, ephemeral: true });
+    await interaction.reply({ content: `${item}を${count}個入庫しました。在庫: ${stock}個`, flags: InteractionReplyFlags.Ephemeral });
   }
 
   if (interaction.commandName === "出庫") {
     const item = interaction.options.getString("item");
     const count = interaction.options.getInteger("count");
     if (!ITEM_LIST.includes(item)) {
-      await interaction.reply({ content: "無効な商品名です。", ephemeral: true });
+      await interaction.reply({ content: "無効な商品名です。", flags: InteractionReplyFlags.Ephemeral });
       return;
     }
     if (count <= 0) {
-      await interaction.reply({ content: "出庫数は1以上を指定してください。", ephemeral: true });
+      await interaction.reply({ content: "出庫数は1以上を指定してください。", flags: InteractionReplyFlags.Ephemeral });
       return;
     }
     const currStock = getItemStock(item);
     if (currStock < count) {
-      await interaction.reply({ content: `在庫不足です。在庫: ${currStock}個`, ephemeral: true });
+      await interaction.reply({ content: `在庫不足です。在庫: ${currStock}個`, flags: InteractionReplyFlags.Ephemeral });
       return;
     }
     const stock = outItemStock(uid, item, count);
-    await interaction.reply({ content: `${item}を${count}個出庫しました。在庫: ${stock}個`, ephemeral: true });
+    await interaction.reply({ content: `${item}を${count}個出庫しました。在庫: ${stock}個`, flags: InteractionReplyFlags.Ephemeral });
   }
 
   if (interaction.commandName === "在庫") {
@@ -416,7 +419,7 @@ client.on("interactionCreate", async interaction => {
     ITEM_LIST.forEach(item => {
       msg += `${item}: ${getItemStock(item)}個\n`;
     });
-    await interaction.reply({ content: msg, ephemeral: true });
+    await interaction.reply({ content: msg, flags: InteractionReplyFlags.Ephemeral });
   }
 });
 
