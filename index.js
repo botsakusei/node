@@ -150,9 +150,8 @@ async function registerCommands() {
       .addIntegerOption(option => option.setName("count").setDescription("出庫数").setRequired(true)),
     new SlashCommandBuilder().setName("在庫").setDescription("商品在庫を一覧表示"),
     new SlashCommandBuilder().setName("csvimport").setDescription("入出庫CSVファイルを添付して一括登録"),
-    new SlashCommandBuilder().setName("usernames").setDescription("DBに記載されているメンバーの名前(ユーザー名)をすべて出力"),
-    new SlashCommandBuilder().setName("userlogimg").setDescription("指定した名前の入庫・出庫数をテキストで出力")
-      .addStringOption(option => option.setName("name").setDescription("集計するユーザー名（CSVのuser列と一致）").setRequired(true)),
+    // usernamesコマンドを削除
+    // new SlashCommandBuilder().setName("usernames").setDescription("DBに記載されているメンバーの名前(ユーザー名)をすべて出力"),
     new SlashCommandBuilder().setName("alluserlog").setDescription("DBに登録された全ユーザー分の入庫・出庫数を分割して出力")
   ].map(cmd => cmd.toJSON());
 
@@ -178,78 +177,7 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // usernamesコマンド
-  if (interaction.commandName === "usernames") {
-    let names = db.prepare("SELECT DISTINCT user_id FROM item_in_log UNION SELECT DISTINCT user_id FROM item_out_log").all();
-    if (names.length === 0) {
-      await interaction.reply({ content: "DBに登録されたメンバーがいません。" });
-      return;
-    }
-    let msg = "DBに記載されているメンバー（user_id列＝CSVのuser列）一覧:\n";
-    for (const obj of names) {
-      msg += `${obj.user_id}\n`;
-    }
-    let msgArray = [];
-    while (msg.length > 1800) {
-      msgArray.push(msg.slice(0, 1800));
-      msg = msg.slice(1800);
-    }
-    if (msg.length > 0) msgArray.push(msg);
-    for (let i = 0; i < msgArray.length; i++) {
-      if (i === 0) {
-        await interaction.reply({ content: msgArray[i] });
-      } else {
-        await interaction.followUp({ content: msgArray[i] });
-      }
-    }
-    return;
-  }
-
-  // userlogimgコマンド（重複商品名を集計して1行にまとめて表示）
-  if (interaction.commandName === "userlogimg") {
-    const inputName = interaction.options.getString("name");
-    let inlog = db.prepare("SELECT item_name, count FROM item_in_log WHERE user_id = ?").all(inputName);
-    let outlog = db.prepare("SELECT item_name, count FROM item_out_log WHERE user_id = ?").all(inputName);
-
-    const displayItems = ITEM_LIST;
-
-    let itemSums = {};
-    for (let item of displayItems) {
-      itemSums[item] = { in: 0, out: 0 };
-    }
-    for (let obj of inlog) {
-      if (itemSums[obj.item_name] !== undefined) itemSums[obj.item_name].in += obj.count;
-    }
-    for (let obj of outlog) {
-      if (itemSums[obj.item_name] !== undefined) itemSums[obj.item_name].out += obj.count;
-    }
-
-    let header = `ユーザー: ${inputName}\n`;
-    header += "商品名".padEnd(14) + "入庫数".padStart(8) + "出庫数".padStart(8) + "\n";
-    let msg = header;
-    for (let item of displayItems) {
-      const sums = itemSums[item];
-      msg += item.padEnd(14) +
-             String(sums.in).padStart(8) +
-             String(sums.out).padStart(8) + "\n";
-    }
-
-    let msgArray = [];
-    while (msg.length > 1800) {
-      msgArray.push(msg.slice(0, 1800));
-      msg = msg.slice(1800);
-    }
-    if (msg.length > 0) msgArray.push(msg);
-
-    for (let i = 0; i < msgArray.length; i++) {
-      if (i == 0) {
-        await interaction.reply({ content: msgArray[i] });
-      } else {
-        await interaction.followUp({ content: msgArray[i] });
-      }
-    }
-    return;
-  }
+  // usernamesコマンド関連処理を削除
 
   // alluserlogコマンド（全ユーザー分分割して出力。重複商品名なしで1行に集計）
   if (interaction.commandName === "alluserlog") {
