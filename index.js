@@ -7,7 +7,9 @@ const {
   GatewayIntentBits,
   SlashCommandBuilder,
   Routes,
-  InteractionType
+  InteractionType,
+  ChannelType,
+  PermissionFlagsBits
 } = pkg;
 import { REST } from "@discordjs/rest";
 import sqlite3 from "better-sqlite3";
@@ -20,10 +22,14 @@ const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID || process.env.DISCORD_GUILD_ID;
 const DB_FILE = "delta_currency.db";
 const GACHA_ANIMATION_PATH = "free_gacha_animation.gif";
+const CAPSULE_IMAGE_PATH = "capsule_item.png";
+const VOICE_PATH = "voice.mp3";
 const GACHA_COST = 10;
 const CURRENCY_UNIT = "デルタ";
 const ISSUE_ROLE_ID = process.env.ISSUE_ROLE_ID;
 const ISSUE_LOG_CHANNEL_ID = process.env.ISSUE_LOG_CHANNEL_ID;
+
+const GACHA_HISTORY_LIMIT = 100; // 履歴は100件
 
 // 商品ラインナップ
 const ITEM_LIST = [
@@ -93,7 +99,7 @@ function subBalance(uid, amt) {
 function addGachaHistory(uid, result) {
   db.prepare("INSERT INTO gacha_history (user_id, result) VALUES (?, ?)").run(uid, result);
 }
-function getGachaHistory(uid, limit = 10) {
+function getGachaHistory(uid, limit = GACHA_HISTORY_LIMIT) {
   return db.prepare("SELECT result, timestamp FROM gacha_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?").all(uid, limit);
 }
 function getItemStock(item) {
@@ -150,8 +156,6 @@ async function registerCommands() {
       .addIntegerOption(option => option.setName("count").setDescription("出庫数").setRequired(true)),
     new SlashCommandBuilder().setName("在庫").setDescription("商品在庫を一覧表示"),
     new SlashCommandBuilder().setName("csvimport").setDescription("入出庫CSVファイルを添付して一括登録"),
-    // usernamesコマンドを削除
-    // new SlashCommandBuilder().setName("usernames").setDescription("DBに記載されているメンバーの名前(ユーザー名)をすべて出力"),
     new SlashCommandBuilder().setName("alluserlog").setDescription("DBに登録された全ユーザー分の入庫・出庫数を分割して出力")
   ].map(cmd => cmd.toJSON());
 
@@ -176,8 +180,6 @@ client.on("interactionCreate", async interaction => {
     await handleCsvImport(interaction);
     return;
   }
-
-  // usernamesコマンド関連処理を削除
 
   // alluserlogコマンド（全ユーザー分分割して出力。重複商品名なしで1行に集計）
   if (interaction.commandName === "alluserlog") {
@@ -228,7 +230,7 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // 既存の各種コマンド
+  // --- ガチャコマンド（プライベートチャンネル演出） ---
   if (interaction.commandName === "ガチャ") {
     let bal = getBalance(uid);
     if (bal < GACHA_COST) {
@@ -238,20 +240,63 @@ client.on("interactionCreate", async interaction => {
     subBalance(uid, GACHA_COST);
     const nb = getBalance(uid);
 
-    await interaction.deferReply();
-    await new Promise(r => setTimeout(r, 500));
-    await interaction.followUp("ガチャを回します…");
-    await new Promise(r => setTimeout(r, 1000));
+    // 1. 演出GIFをEphemeralで返信
+    await interaction.reply({ content: "ガチャを回します…", files: [GACHA_ANIMATION_PATH], ephemeral: true });
 
-    if (fs.existsSync(GACHA_ANIMATION_PATH)) {
-      await interaction.followUp({ files: [GACHA_ANIMATION_PATH] });
-    } else {
-      await interaction.followUp("演出画像なし");
-    }
-    await new Promise(r => setTimeout(r, 2000));
-    const result = Math.floor(Math.random() * 100) + 1;
-    addGachaHistory(uid, result);
-    await interaction.followUp(`✨結果: ${result}！残高: ${nb}${CURRENCY_UNIT}`);
+    // 2. 3秒後にプライベートチャンネル作成
+    setTimeout(async () => {
+      try {
+        const channelName = `gacha-${interaction.user.id}-${Date.now()}`;
+        const privateChannel = await interaction.guild.channels.create({
+          name: channelName,
+          type: ChannelType.GuildText,
+          permissionOverwrites: [
+            {
+              id: interaction.guild.roles.everyone,
+              deny: [PermissionFlagsBits.ViewChannel]
+            },
+            {
+              id: interaction.user.id,
+              allow: [PermissionFlagsBits.ViewChannel]
+            },
+            {
+              id: client.user.id,
+              allow: [PermissionFlagsBits.ViewChannel]
+            }
+          ]
+        });
+
+        // 3. カプセル画像送信
+        await privateChannel.send({ content: "カプセルの中身は…", files: [CAPSULE_IMAGE_PATH] });
+
+        // 4. 3秒後にボイス送信
+        setTimeout(async () => {
+          await privateChannel.send({ content: "ガチャの中身ボイス！", files: [VOICE_PATH] });
+        }, 3000);
+
+        // 5. ガチャ結果保存
+        const result = Math.floor(Math.random() * 100) + 1;
+        addGachaHistory(uid, result);
+
+        // 6. プライベートチャンネルを2時間後に削除
+        setTimeout(async () => {
+          try {
+            await privateChannel.delete("ガチャ演出終了のため自動削除");
+          } catch (e) {
+            console.error("自動削除失敗", e);
+          }
+        }, 2 * 60 * 60 * 1000); // 2時間
+
+        // 7. Ephemeralに結果表示
+        await interaction.followUp({ content: `✨結果: ${result}！残高: ${nb}${CURRENCY_UNIT}\n詳細はあなた専用チャンネルで！`, ephemeral: true });
+
+      } catch (e) {
+        console.error("ガチャプライベートチャンネル生成失敗", e);
+        await interaction.followUp({ content: "ガチャ演出チャンネルの作成に失敗しました。", ephemeral: true });
+      }
+    }, 3000);
+
+    return;
   }
 
   if (interaction.commandName === "残高") {
@@ -260,45 +305,42 @@ client.on("interactionCreate", async interaction => {
   }
 
   if (interaction.commandName === "履歴") {
-    const history = getGachaHistory(uid, 10);
+    const history = getGachaHistory(uid, GACHA_HISTORY_LIMIT); // 100件に変更
     if (history.length === 0) {
       await interaction.reply({ content: "履歴はありません。", ephemeral: true });
       return;
     }
     const historyText = history.map(h => `結果: ${h.result} (${h.timestamp})`).join("\n");
-    await interaction.reply({ content: `あなたのガチャ履歴（最新10件）:\n${historyText}`, ephemeral: true });
+    await interaction.reply({ content: `あなたのガチャ履歴（最新${GACHA_HISTORY_LIMIT}件）:\n${historyText}`, ephemeral: true });
   }
 
   if (interaction.commandName === "発行") {
-  const member = await interaction.guild.members.fetch(interaction.user.id);
-  if (!member.roles.cache.has(ISSUE_ROLE_ID)) {
-    await interaction.reply({ content: "あなたは発行権限がありません。", ephemeral: true });
-    return;
-  }
-  const targetUser = interaction.options.getUser("user");
-  const amount = interaction.options.getInteger("amount");
-  if (amount <= 0) {
-    await interaction.reply({ content: "発行額は1以上にしてください。", ephemeral: true });
-    return;
-  }
-  const nb = addBalance(targetUser.id, amount);
-  await interaction.reply({ content: `${targetUser} に ${amount}${CURRENCY_UNIT} を発行しました。新残高: ${nb}${CURRENCY_UNIT}`, ephemeral: true });
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    if (!member.roles.cache.has(ISSUE_ROLE_ID)) {
+      await interaction.reply({ content: "あなたは発行権限がありません。", ephemeral: true });
+      return;
+    }
+    const targetUser = interaction.options.getUser("user");
+    const amount = interaction.options.getInteger("amount");
+    if (amount <= 0) {
+      await interaction.reply({ content: "発行額は1以上にしてください。", ephemeral: true });
+      return;
+    }
+    const nb = addBalance(targetUser.id, amount);
+    await interaction.reply({ content: `${targetUser} に ${amount}${CURRENCY_UNIT} を発行しました。新残高: ${nb}${CURRENCY_UNIT}`, ephemeral: true });
 
-  try {
-    // ここでtargetUserのmember情報を取得
-    const targetMember = await interaction.guild.members.fetch(targetUser.id);
-
-    const logChannel = await client.channels.fetch(ISSUE_LOG_CHANNEL_ID);
-    await logChannel.send({
-      content: `【デルタ発行ログ】
+    try {
+      const targetMember = await interaction.guild.members.fetch(targetUser.id);
+      const logChannel = await client.channels.fetch(ISSUE_LOG_CHANNEL_ID);
+      await logChannel.send({
+        content: `【デルタ発行ログ】
 発行者: ${member.displayName} (${interaction.user.id})
 対象: ${targetMember.displayName} (${targetUser.id})
 金額: ${amount}${CURRENCY_UNIT}
 新残高: ${nb}${CURRENCY_UNIT}`
-    });
-  } catch (e) {
-    console.error("ログチャンネル送信失敗:", e);
-
+      });
+    } catch (e) {
+      console.error("ログチャンネル送信失敗:", e);
     }
   }
 
