@@ -270,31 +270,35 @@ client.on("interactionCreate", async interaction => {
   }
 
   if (interaction.commandName === "発行") {
-    const member = await interaction.guild.members.fetch(interaction.user.id);
-    if (!member.roles.cache.has(ISSUE_ROLE_ID)) {
-      await interaction.reply({ content: "あなたは発行権限がありません。", ephemeral: true });
-      return;
-    }
-    const targetUser = interaction.options.getUser("user");
-    const amount = interaction.options.getInteger("amount");
-    if (amount <= 0) {
-      await interaction.reply({ content: "発行額は1以上にしてください。", ephemeral: true });
-      return;
-    }
-    const nb = addBalance(targetUser.id, amount);
-    await interaction.reply({ content: `${targetUser} に ${amount}${CURRENCY_UNIT} を発行しました。新残高: ${nb}${CURRENCY_UNIT}`, ephemeral: true });
+  const member = await interaction.guild.members.fetch(interaction.user.id);
+  if (!member.roles.cache.has(ISSUE_ROLE_ID)) {
+    await interaction.reply({ content: "あなたは発行権限がありません。", ephemeral: true });
+    return;
+  }
+  const targetUser = interaction.options.getUser("user");
+  const amount = interaction.options.getInteger("amount");
+  if (amount <= 0) {
+    await interaction.reply({ content: "発行額は1以上にしてください。", ephemeral: true });
+    return;
+  }
+  const nb = addBalance(targetUser.id, amount);
+  await interaction.reply({ content: `${targetUser} に ${amount}${CURRENCY_UNIT} を発行しました。新残高: ${nb}${CURRENCY_UNIT}`, ephemeral: true });
 
-    try {
-      const logChannel = await client.channels.fetch(ISSUE_LOG_CHANNEL_ID);
-      await logChannel.send({
-        content: `【デルタ発行ログ】
-発行者: ${interaction.user.tag} (${interaction.user.id})
-対象: ${targetUser.tag} (${targetUser.id})
+  try {
+    // ここでtargetUserのmember情報を取得
+    const targetMember = await interaction.guild.members.fetch(targetUser.id);
+
+    const logChannel = await client.channels.fetch(ISSUE_LOG_CHANNEL_ID);
+    await logChannel.send({
+      content: `【デルタ発行ログ】
+発行者: ${member.displayName} (${interaction.user.id})
+対象: ${targetMember.displayName} (${targetUser.id})
 金額: ${amount}${CURRENCY_UNIT}
 新残高: ${nb}${CURRENCY_UNIT}`
-      });
-    } catch (e) {
-      console.error("ログチャンネル送信失敗:", e);
+    });
+  } catch (e) {
+    console.error("ログチャンネル送信失敗:", e);
+
     }
   }
 
