@@ -228,8 +228,6 @@ client.on("interactionCreate", async interaction => {
   }
 
   // 既存の各種コマンド
-const NAME_LIST = ["Aさん", "Bさん", "Cさん", "Dさん"]; // ガチャ対象の名前リスト
-
 if (interaction.commandName === "ガチャ") {
   let bal = getBalance(uid);
   if (bal < GACHA_COST) {
@@ -239,27 +237,24 @@ if (interaction.commandName === "ガチャ") {
   subBalance(uid, GACHA_COST);
   const nb = getBalance(uid);
 
-  // 名前リストから抽選
+  // 名前リスト・ガチャ動画パス
+  const NAME_LIST = ["Aさん", "Bさん", "Cさん"];
   const resultName = NAME_LIST[Math.floor(Math.random() * NAME_LIST.length)];
-
-  // 動画ファイルパス
   const videoPath = `gatyadouga/${resultName}.mp4`;
 
-  // メッセージ生成
-  let message = `結果: ${resultName}！残高: ${nb}${CURRENCY_UNIT}\n`;
-
-  // ファイルが存在する場合は動画添付
+  let message = `ガチャを回します…\n`;
   let files = [];
   if (fs.existsSync(videoPath)) {
     files.push(videoPath);
   } else {
-    message += "動画なし\n";
+    message += "演出動画なし\n";
   }
 
-  // 履歴も名前で保存したい場合は、addGachaHistory(uid, resultName)でOK
+  // ガチャ結果
+  message += `結果: ${resultName}！残高: ${nb}${CURRENCY_UNIT}`;
   addGachaHistory(uid, resultName);
 
-  // エフェメラルで本人だけに表示
+  // 本人だけへのエフェメラル返信
   await interaction.reply({
     content: message,
     files,
