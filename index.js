@@ -228,7 +228,7 @@ client.on("interactionCreate", async interaction => {
   }
 
   // 既存の各種コマンド
-  if (interaction.commandName === "ガチャ") {
+ if (interaction.commandName === "ガチャ") {
   let bal = getBalance(uid);
   if (bal < GACHA_COST) {
     await interaction.reply({ content: `残高不足！（${bal}${CURRENCY_UNIT}）`, ephemeral: true });
@@ -237,59 +237,26 @@ client.on("interactionCreate", async interaction => {
   subBalance(uid, GACHA_COST);
   const nb = getBalance(uid);
 
-  // まずコマンド送信者に「ガチャを回します…」だけephemeralで返す（必須）
-  await interaction.reply({ content: "ガチャを回します…", ephemeral: true });
+  // ガチャ演出画像 or テキスト
+  let files = [];
+  let message = "ガチャを回します…\n";
+  if (fs.existsSync(GACHA_ANIMATION_PATH)) {
+    files.push(GACHA_ANIMATION_PATH);
+  } else {
+    message += "演出画像なし\n";
+  }
 
-  // 3秒後に本人専用チャンネル作成してガチャ演出＆結果を送信
-  setTimeout(async () => {
-    try {
-      const channelName = `gacha-${interaction.user.id}-${Date.now()}`;
-      // チャンネル作成（PermissionOverwritesで本人のみ閲覧可能）
-      const privateChannel = await interaction.guild.channels.create({
-        name: channelName,
-        type: ChannelType.GuildText,
-        permissionOverwrites: [
-          {
-            id: interaction.guild.roles.everyone,
-            deny: [PermissionFlagsBits.ViewChannel]
-          },
-          {
-            id: interaction.user.id,
-            allow: [PermissionFlagsBits.ViewChannel]
-          },
-          {
-            id: client.user.id,
-            allow: [PermissionFlagsBits.ViewChannel]
-          }
-        ]
-      });
+  // ガチャ結果
+  const result = Math.floor(Math.random() * 100) + 1;
+  addGachaHistory(uid, result);
+  message += `結果: ${result}！残高: ${nb}${CURRENCY_UNIT}`;
 
-      // ガチャ演出画像を送信
-      if (fs.existsSync(GACHA_ANIMATION_PATH)) {
-        await privateChannel.send({ files: [GACHA_ANIMATION_PATH] });
-      } else {
-        await privateChannel.send("演出画像なし");
-      }
-
-      // ガチャ結果
-      const result = Math.floor(Math.random() * 100) + 1;
-      addGachaHistory(uid, result);
-      await privateChannel.send(`結果: ${result}！残高: ${nb}${CURRENCY_UNIT}`);
-
-      // チャンネルは2時間後に自動削除
-      setTimeout(async () => {
-        try {
-          await privateChannel.delete("ガチャ演出終了のため自動削除");
-        } catch (e) {
-          console.error("自動削除失敗", e);
-        }
-      }, 2 * 60 * 60 * 1000);
-
-    } catch (e) {
-      console.error("ガチャプライベートチャンネル生成失敗", e);
-      await interaction.followUp({ content: "ガチャ演出チャンネルの作成に失敗しました。", ephemeral: true });
-    }
-  }, 3000);
+  // エフェメラルで本人だけに表示
+  await interaction.reply({
+    content: message,
+    files,
+    ephemeral: true
+  });
 }
 
   if (interaction.commandName === "残高") {
