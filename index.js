@@ -18,7 +18,7 @@ import fetch from "node-fetch";
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID || process.env.DISCORD_GUILD_ID;
-const DB_FILE = "delta_currency.db";
+const DB_FILE = "/mnt/volume/delta_currency.db";
 const GACHA_ANIMATION_PATH = "free_gacha_animation.gif";
 const GACHA_COST = 10;
 const CURRENCY_UNIT = "デルタ";
