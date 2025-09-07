@@ -12,12 +12,26 @@ const {
 import { REST } from "@discordjs/rest";
 import fs from "fs";
 import fetch from "node-fetch";
-import { createClient } from "@supabase/supabase-js";
+import { MongoClient, ObjectId } from "mongodb";
 
-// Supabaseの設定
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// MongoDB Atlasの設定
+const MONGODB_URI = process.env.MONGODB_URI;
+const MONGODB_DB = process.env.MONGODB_DB || "gacha_bot";
+const mongoClient = new MongoClient(MONGODB_URI, { useUnifiedTopology: true });
+
+let db;
+let balances;
+let gacha_history;
+let item_stock;
+
+async function mongoInit() {
+  await mongoClient.connect();
+  db = mongoClient.db(MONGODB_DB);
+  balances = db.collection("balances");
+  gacha_history = db.collection("gacha_history");
+  item_stock = db.collection("item_stock");
+  console.log("MongoDB connected");
+}
 
 // 環境変数
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -38,95 +52,77 @@ const ITEM_LIST = [
   "マグロノ中落チ"
 ];
 
-// Supabase DB関数
+// MongoDB DB関数
 async function getBalance(uid) {
-  const { data, error } = await supabase
-    .from("balances")
-    .select("amount")
-    .eq("user_id", uid)
-    .single();
-  if (error || !data) return 0;
-  return data.amount;
+  const doc = await balances.findOne({ user_id: uid });
+  return doc ? doc.amount : 0;
 }
 
 async function addBalance(uid, amt) {
   const current = await getBalance(uid);
   const newBalance = current + amt;
-  // upsert
-  const { error } = await supabase
-    .from("balances")
-    .upsert([{ user_id: uid, amount: newBalance }], { onConflict: ["user_id"] });
-  if (error) throw error;
+  await balances.updateOne(
+    { user_id: uid },
+    { $set: { user_id: uid, amount: newBalance } },
+    { upsert: true }
+  );
   return newBalance;
 }
 
 async function subBalance(uid, amt) {
   const current = await getBalance(uid);
   const newBalance = Math.max(0, current - amt);
-  const { error } = await supabase
-    .from("balances")
-    .upsert([{ user_id: uid, amount: newBalance }], { onConflict: ["user_id"] });
-  if (error) throw error;
+  await balances.updateOne(
+    { user_id: uid },
+    { $set: { user_id: uid, amount: newBalance } },
+    { upsert: true }
+  );
   return newBalance;
 }
 
 async function addGachaHistory(uid, result) {
-  const { error } = await supabase
-    .from("gacha_history")
-    .insert([{ user_id: uid, result, timestamp: new Date().toISOString() }]);
-  if (error) throw error;
+  await gacha_history.insertOne({
+    user_id: uid,
+    result,
+    timestamp: new Date().toISOString()
+  });
 }
 
 async function getGachaHistory(uid, limit = 10) {
-  const { data, error } = await supabase
-    .from("gacha_history")
-    .select("*")
-    .eq("user_id", uid)
-    .order("timestamp", { ascending: false })
-    .limit(limit);
-  if (error || !data) return [];
-  return data;
+  const docs = await gacha_history
+    .find({ user_id: uid })
+    .sort({ timestamp: -1 })
+    .limit(limit)
+    .toArray();
+  return docs;
 }
 
 async function getItemStock(item) {
-  const { data, error } = await supabase
-    .from("item_stock")
-    .select("count")
-    .eq("item", item)
-    .maybeSingle();
-  if (error || !data) return 0;
-  return data.count || 0;
+  const doc = await item_stock.findOne({ item });
+  return doc ? doc.count : 0;
 }
 
 async function addItemStock(uid, item, count, date = null) {
-  const { data, error } = await supabase
-    .from("item_stock")
-    .select("*")
-    .eq("user_id", uid)
-    .eq("item", item)
-    .single();
+  const doc = await item_stock.findOne({ user_id: uid, item });
   let newCount = count;
-  if (data) newCount = data.count + count;
-  const { error: upsertError } = await supabase
-    .from("item_stock")
-    .upsert([{ user_id: uid, item, count: newCount }], { onConflict: ["user_id", "item"] });
-  if (upsertError) throw upsertError;
+  if (doc) newCount = doc.count + count;
+  await item_stock.updateOne(
+    { user_id: uid, item },
+    { $set: { user_id: uid, item, count: newCount } },
+    { upsert: true }
+  );
   return newCount;
 }
 
 async function outItemStock(uid, item, count, date = null) {
-  const { data, error } = await supabase
-    .from("item_stock")
-    .select("*")
-    .eq("user_id", uid)
-    .eq("item", item)
-    .single();
+  const doc = await item_stock.findOne({ user_id: uid, item });
   let newCount = 0;
-  if (data) newCount = Math.max(0, data.count - count);
-  const { error: upsertError } = await supabase
-    .from("item_stock")
-    .upsert([{ user_id: uid, item, count: newCount }], { onConflict: ["user_id", "item"] });
-  if (upsertError) throw upsertError;
+  if (doc) newCount = Math.max(0, doc.count - count);
+  await item_stock.updateOne(
+    { user_id: uid, item },
+    { $set: { user_id: uid, item, count: newCount } },
+    { upsert: true }
+  );
   return newCount;
 }
 
@@ -143,9 +139,10 @@ const CSV_IMPORT_STATE = {
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
-client.once("clientReady", () => {
+client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
-  registerCommands();
+  await mongoInit();
+  await registerCommands();
 });
 
 // コマンド登録
