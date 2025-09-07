@@ -58,7 +58,7 @@ function outItemStock(uid, item, count, date = null) {
 
 // csvimportコマンド（CSV添付で一括登録）
 async function handleCsvImport(interaction) {
-  await interaction.reply({ content: "CSVファイルをこのコマンド実行後、**同じチャンネルに**添付してください。\nファイル名は何でもOKです。", ephemeral: true });
+  await interaction.reply({ content: "CSVファイルをこのコマンド実行後、**同じチャンネルに**添付してください。\nファイル名は何でもOKです。", flags: 64 });
 }
 
 // メッセージでcsvファイルを受信してDB登録
@@ -70,7 +70,8 @@ const CSV_IMPORT_STATE = {
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
-client.once("ready", () => {
+// 変更：ready→clientReady
+client.once("clientReady", () => {
   console.log(`Logged in as ${client.user.tag}`);
   registerCommands();
 });
@@ -119,7 +120,7 @@ client.on("interactionCreate", async interaction => {
 
   // alluserlogコマンド（DB関係削除）
   if (interaction.commandName === "alluserlog") {
-    await interaction.reply("登録データがありません。");
+    await interaction.reply({ content: "登録データがありません。", flags: 64 });
     return;
   }
 
@@ -127,7 +128,7 @@ client.on("interactionCreate", async interaction => {
   if (interaction.commandName === "ガチャ") {
     let bal = getBalance(uid);
     if (bal < GACHA_COST) {
-      await interaction.reply({ content: `残高不足！（${bal}${CURRENCY_UNIT}）`, ephemeral: true });
+      await interaction.reply({ content: `残高不足！（${bal}${CURRENCY_UNIT}）`, flags: 64 });
       return;
     }
     subBalance(uid, GACHA_COST);
@@ -153,39 +154,39 @@ client.on("interactionCreate", async interaction => {
     await interaction.reply({
       content: message,
       files,
-      ephemeral: true
+      flags: 64
     });
   }
 
   if (interaction.commandName === "残高") {
     let bal = getBalance(uid);
-    await interaction.reply({ content: `${interaction.user} 残高: ${bal}${CURRENCY_UNIT}`, ephemeral: true });
+    await interaction.reply({ content: `${interaction.user} 残高: ${bal}${CURRENCY_UNIT}`, flags: 64 });
   }
 
   if (interaction.commandName === "履歴") {
     const history = getGachaHistory(uid, 10);
     if (history.length === 0) {
-      await interaction.reply({ content: "履歴はありません。", ephemeral: true });
+      await interaction.reply({ content: "履歴はありません。", flags: 64 });
       return;
     }
     const historyText = history.map(h => `結果: ${h.result} (${h.timestamp})`).join("\n");
-    await interaction.reply({ content: `あなたのガチャ履歴（最新10件）:\n${historyText}`, ephemeral: true });
+    await interaction.reply({ content: `あなたのガチャ履歴（最新10件）:\n${historyText}`, flags: 64 });
   }
 
   if (interaction.commandName === "発行") {
     const member = await interaction.guild.members.fetch(interaction.user.id);
     if (!member.roles.cache.has(ISSUE_ROLE_ID)) {
-      await interaction.reply({ content: "あなたは発行権限がありません。", ephemeral: true });
+      await interaction.reply({ content: "あなたは発行権限がありません。", flags: 64 });
       return;
     }
     const targetUser = interaction.options.getUser("user");
     const amount = interaction.options.getInteger("amount");
     if (amount <= 0) {
-      await interaction.reply({ content: "発行額は1以上にしてください。", ephemeral: true });
+      await interaction.reply({ content: "発行額は1以上にしてください。", flags: 64 });
       return;
     }
     const nb = addBalance(targetUser.id, amount);
-    await interaction.reply({ content: `${targetUser} に ${amount}${CURRENCY_UNIT} を発行しました。新残高: ${nb}${CURRENCY_UNIT}`, ephemeral: true });
+    await interaction.reply({ content: `${targetUser} に ${amount}${CURRENCY_UNIT} を発行しました。新残高: ${nb}${CURRENCY_UNIT}`, flags: 64 });
 
     try {
       const logChannel = await client.channels.fetch(ISSUE_LOG_CHANNEL_ID);
@@ -205,35 +206,35 @@ client.on("interactionCreate", async interaction => {
     const item = interaction.options.getString("item");
     const count = interaction.options.getInteger("count");
     if (!ITEM_LIST.includes(item)) {
-      await interaction.reply({ content: "無効な商品名です。", ephemeral: true });
+      await interaction.reply({ content: "無効な商品名です。", flags: 64 });
       return;
     }
     if (count <= 0) {
-      await interaction.reply({ content: "入庫数は1以上を指定してください。", ephemeral: true });
+      await interaction.reply({ content: "入庫数は1以上を指定してください。", flags: 64 });
       return;
     }
     const stock = addItemStock(uid, item, count);
-    await interaction.reply({ content: `${item}を${count}個入庫しました。在庫: ${stock}個`, ephemeral: true });
+    await interaction.reply({ content: `${item}を${count}個入庫しました。在庫: ${stock}個`, flags: 64 });
   }
 
   if (interaction.commandName === "出庫") {
     const item = interaction.options.getString("item");
     const count = interaction.options.getInteger("count");
     if (!ITEM_LIST.includes(item)) {
-      await interaction.reply({ content: "無効な商品名です。", ephemeral: true });
+      await interaction.reply({ content: "無効な商品名です。", flags: 64 });
       return;
     }
     if (count <= 0) {
-      await interaction.reply({ content: "出庫数は1以上を指定してください。", ephemeral: true });
+      await interaction.reply({ content: "出庫数は1以上を指定してください。", flags: 64 });
       return;
     }
     const currStock = getItemStock(item);
     if (currStock < count) {
-      await interaction.reply({ content: `在庫不足です。在庫: ${currStock}個`, ephemeral: true });
+      await interaction.reply({ content: `在庫不足です。在庫: ${currStock}個`, flags: 64 });
       return;
     }
     const stock = outItemStock(uid, item, count);
-    await interaction.reply({ content: `${item}を${count}個出庫しました。在庫: ${stock}個`, ephemeral: true });
+    await interaction.reply({ content: `${item}を${count}個出庫しました。在庫: ${stock}個`, flags: 64 });
   }
 
   if (interaction.commandName === "在庫") {
@@ -241,7 +242,7 @@ client.on("interactionCreate", async interaction => {
     ITEM_LIST.forEach(item => {
       msg += `${item}: ${getItemStock(item)}個\n`;
     });
-    await interaction.reply({ content: msg, ephemeral: true });
+    await interaction.reply({ content: msg, flags: 64 });
   }
 });
 
