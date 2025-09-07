@@ -19,6 +19,7 @@ const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID || process.env.DISCORD_GUILD_ID;
 const DB_FILE = "delta_currency.db";
+const GACHA_ANIMATION_PATH = "free_gacha_animation.gif";
 const GACHA_COST = 10;
 const CURRENCY_UNIT = "デルタ";
 const ISSUE_ROLE_ID = process.env.ISSUE_ROLE_ID;
@@ -33,16 +34,13 @@ const ITEM_LIST = [
   "マグロノ中落チ"
 ];
 
-// ガチャ結果用の名前リスト
-const NAME_LIST = ["Aさん", "Bさん", "Cさん"];
-
 // DB初期化
 const db = sqlite3(DB_FILE);
 db.prepare(`CREATE TABLE IF NOT EXISTS currency (user_id TEXT PRIMARY KEY, balance INTEGER NOT NULL)`).run();
 db.prepare(`
   CREATE TABLE IF NOT EXISTS gacha_history (
     user_id TEXT,
-    result TEXT,
+    result INTEGER,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `).run();
@@ -152,6 +150,7 @@ async function registerCommands() {
       .addIntegerOption(option => option.setName("count").setDescription("出庫数").setRequired(true)),
     new SlashCommandBuilder().setName("在庫").setDescription("商品在庫を一覧表示"),
     new SlashCommandBuilder().setName("csvimport").setDescription("入出庫CSVファイルを添付して一括登録"),
+    // userlogimgコマンド削除済み
     new SlashCommandBuilder().setName("alluserlog").setDescription("DBに登録された全ユーザー分の入庫・出庫数を分割して出力")
   ].map(cmd => cmd.toJSON());
 
@@ -176,6 +175,8 @@ client.on("interactionCreate", async interaction => {
     await handleCsvImport(interaction);
     return;
   }
+
+  // userlogimgコマンド関連処理削除済み
 
   // alluserlogコマンド（全ユーザー分分割して出力。重複商品名なしで1行に集計）
   if (interaction.commandName === "alluserlog") {
@@ -226,38 +227,40 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // ガチャコマンド（Aさんの時だけ動画添付）
-  if (interaction.commandName === "ガチャ") {
-    let bal = getBalance(uid);
-    if (bal < GACHA_COST) {
-      await interaction.reply({ content: `残高不足！（${bal}${CURRENCY_UNIT}）`, ephemeral: true });
-      return;
-    }
-    subBalance(uid, GACHA_COST);
-    const nb = getBalance(uid);
-
-    const resultName = NAME_LIST[Math.floor(Math.random() * NAME_LIST.length)];
-    let message = `ガチャを回します…\n結果: ${resultName}！残高: ${nb}${CURRENCY_UNIT}\n`;
-    let files = [];
-
-    if (resultName === "Aさん") {
-      const videoPath = "A.mp4"; // gatyadouga/A.mp4でもOK（パス合わせて）
-      if (fs.existsSync(videoPath)) {
-        files.push(videoPath);
-      } else {
-        message += "Aさん動画がありません。\n";
-      }
-    }
-
-    addGachaHistory(uid, resultName);
-
-    await interaction.reply({
-      content: message,
-      files,
-      ephemeral: true
-    });
+  // 既存の各種コマンド
+if (interaction.commandName === "ガチャ") {
+  let bal = getBalance(uid);
+  if (bal < GACHA_COST) {
+    await interaction.reply({ content: `残高不足！（${bal}${CURRENCY_UNIT}）`, ephemeral: true });
     return;
   }
+  subBalance(uid, GACHA_COST);
+  const nb = getBalance(uid);
+
+  // 名前リスト・ガチャ動画パス
+  const NAME_LIST = ["Aさん", "Bさん", "Cさん"];
+  const resultName = NAME_LIST[Math.floor(Math.random() * NAME_LIST.length)];
+  const videoPath = `gatyadouga/${resultName}.mp4`;
+
+  let message = `ガチャを回します…\n`;
+  let files = [];
+  if (fs.existsSync(videoPath)) {
+    files.push(videoPath);
+  } else {
+    message += "演出動画なし\n";
+  }
+
+  // ガチャ結果
+  message += `結果: ${resultName}！残高: ${nb}${CURRENCY_UNIT}`;
+  addGachaHistory(uid, resultName);
+
+  // 本人だけへのエフェメラル返信
+  await interaction.reply({
+    content: message,
+    files,
+    ephemeral: true
+  });
+}
 
   if (interaction.commandName === "残高") {
     let bal = getBalance(uid);
