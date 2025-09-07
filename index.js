@@ -12,6 +12,12 @@ const {
 import { REST } from "@discordjs/rest";
 import fs from "fs";
 import fetch from "node-fetch";
+import { createClient } from "@supabase/supabase-js";
+
+// Supabaseの設定
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // 環境変数
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -32,36 +38,103 @@ const ITEM_LIST = [
   "マグロノ中落チ"
 ];
 
-// 関数定義（DB関係削除）
-function getBalance(uid) {
-  return 0;
-}
-function addBalance(uid, amt) {
-  return amt;
-}
-function subBalance(uid, amt) {
-  return 0;
-}
-function addGachaHistory(uid, result) {}
-function getGachaHistory(uid, limit = 10) {
-  return [];
-}
-function getItemStock(item) {
-  return 0;
-}
-function addItemStock(uid, item, count, date = null) {
-  return count;
-}
-function outItemStock(uid, item, count, date = null) {
-  return 0;
+// Supabase DB関数
+async function getBalance(uid) {
+  const { data, error } = await supabase
+    .from("balances")
+    .select("amount")
+    .eq("user_id", uid)
+    .single();
+  if (error || !data) return 0;
+  return data.amount;
 }
 
-// csvimportコマンド（CSV添付で一括登録）
+async function addBalance(uid, amt) {
+  const current = await getBalance(uid);
+  const newBalance = current + amt;
+  // upsert
+  const { error } = await supabase
+    .from("balances")
+    .upsert([{ user_id: uid, amount: newBalance }], { onConflict: ["user_id"] });
+  if (error) throw error;
+  return newBalance;
+}
+
+async function subBalance(uid, amt) {
+  const current = await getBalance(uid);
+  const newBalance = Math.max(0, current - amt);
+  const { error } = await supabase
+    .from("balances")
+    .upsert([{ user_id: uid, amount: newBalance }], { onConflict: ["user_id"] });
+  if (error) throw error;
+  return newBalance;
+}
+
+async function addGachaHistory(uid, result) {
+  const { error } = await supabase
+    .from("gacha_history")
+    .insert([{ user_id: uid, result, timestamp: new Date().toISOString() }]);
+  if (error) throw error;
+}
+
+async function getGachaHistory(uid, limit = 10) {
+  const { data, error } = await supabase
+    .from("gacha_history")
+    .select("*")
+    .eq("user_id", uid)
+    .order("timestamp", { ascending: false })
+    .limit(limit);
+  if (error || !data) return [];
+  return data;
+}
+
+async function getItemStock(item) {
+  const { data, error } = await supabase
+    .from("item_stock")
+    .select("count")
+    .eq("item", item)
+    .maybeSingle();
+  if (error || !data) return 0;
+  return data.count || 0;
+}
+
+async function addItemStock(uid, item, count, date = null) {
+  const { data, error } = await supabase
+    .from("item_stock")
+    .select("*")
+    .eq("user_id", uid)
+    .eq("item", item)
+    .single();
+  let newCount = count;
+  if (data) newCount = data.count + count;
+  const { error: upsertError } = await supabase
+    .from("item_stock")
+    .upsert([{ user_id: uid, item, count: newCount }], { onConflict: ["user_id", "item"] });
+  if (upsertError) throw upsertError;
+  return newCount;
+}
+
+async function outItemStock(uid, item, count, date = null) {
+  const { data, error } = await supabase
+    .from("item_stock")
+    .select("*")
+    .eq("user_id", uid)
+    .eq("item", item)
+    .single();
+  let newCount = 0;
+  if (data) newCount = Math.max(0, data.count - count);
+  const { error: upsertError } = await supabase
+    .from("item_stock")
+    .upsert([{ user_id: uid, item, count: newCount }], { onConflict: ["user_id", "item"] });
+  if (upsertError) throw upsertError;
+  return newCount;
+}
+
+// csvimportコマンド（CSV添付で一括登録）-- DB処理なしでOK
 async function handleCsvImport(interaction) {
   await interaction.reply({ content: "CSVファイルをこのコマンド実行後、**同じチャンネルに**添付してください。\nファイル名は何でもOKです。", flags: 64 });
 }
 
-// メッセージでcsvファイルを受信してDB登録
 const CSV_IMPORT_STATE = {
   waiting: false,
   channelId: null,
@@ -70,7 +143,6 @@ const CSV_IMPORT_STATE = {
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
-// 変更：ready→clientReady
 client.once("clientReady", () => {
   console.log(`Logged in as ${client.user.tag}`);
   registerCommands();
@@ -124,15 +196,15 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // 既存の各種コマンド
+  // ガチャ
   if (interaction.commandName === "ガチャ") {
-    let bal = getBalance(uid);
+    let bal = await getBalance(uid);
     if (bal < GACHA_COST) {
       await interaction.reply({ content: `残高不足！（${bal}${CURRENCY_UNIT}）`, flags: 64 });
       return;
     }
-    subBalance(uid, GACHA_COST);
-    const nb = getBalance(uid);
+    await subBalance(uid, GACHA_COST);
+    const nb = await getBalance(uid);
 
     // 名前リスト・ガチャ動画パス
     const NAME_LIST = ["Aさん", "Bさん", "Cさん"];
@@ -149,7 +221,7 @@ client.on("interactionCreate", async interaction => {
 
     // ガチャ結果
     message += `結果: ${resultName}！残高: ${nb}${CURRENCY_UNIT}`;
-    addGachaHistory(uid, resultName);
+    await addGachaHistory(uid, resultName);
 
     await interaction.reply({
       content: message,
@@ -159,12 +231,12 @@ client.on("interactionCreate", async interaction => {
   }
 
   if (interaction.commandName === "残高") {
-    let bal = getBalance(uid);
+    let bal = await getBalance(uid);
     await interaction.reply({ content: `${interaction.user} 残高: ${bal}${CURRENCY_UNIT}`, flags: 64 });
   }
 
   if (interaction.commandName === "履歴") {
-    const history = getGachaHistory(uid, 10);
+    const history = await getGachaHistory(uid, 10);
     if (history.length === 0) {
       await interaction.reply({ content: "履歴はありません。", flags: 64 });
       return;
@@ -185,7 +257,7 @@ client.on("interactionCreate", async interaction => {
       await interaction.reply({ content: "発行額は1以上にしてください。", flags: 64 });
       return;
     }
-    const nb = addBalance(targetUser.id, amount);
+    const nb = await addBalance(targetUser.id, amount);
     await interaction.reply({ content: `${targetUser} に ${amount}${CURRENCY_UNIT} を発行しました。新残高: ${nb}${CURRENCY_UNIT}`, flags: 64 });
 
     try {
@@ -213,7 +285,7 @@ client.on("interactionCreate", async interaction => {
       await interaction.reply({ content: "入庫数は1以上を指定してください。", flags: 64 });
       return;
     }
-    const stock = addItemStock(uid, item, count);
+    const stock = await addItemStock(uid, item, count);
     await interaction.reply({ content: `${item}を${count}個入庫しました。在庫: ${stock}個`, flags: 64 });
   }
 
@@ -228,20 +300,21 @@ client.on("interactionCreate", async interaction => {
       await interaction.reply({ content: "出庫数は1以上を指定してください。", flags: 64 });
       return;
     }
-    const currStock = getItemStock(item);
+    const currStock = await getItemStock(item);
     if (currStock < count) {
       await interaction.reply({ content: `在庫不足です。在庫: ${currStock}個`, flags: 64 });
       return;
     }
-    const stock = outItemStock(uid, item, count);
+    const stock = await outItemStock(uid, item, count);
     await interaction.reply({ content: `${item}を${count}個出庫しました。在庫: ${stock}個`, flags: 64 });
   }
 
   if (interaction.commandName === "在庫") {
     let msg = "【商品在庫一覧】\n";
-    ITEM_LIST.forEach(item => {
-      msg += `${item}: ${getItemStock(item)}個\n`;
-    });
+    for (const item of ITEM_LIST) {
+      const stock = await getItemStock(item);
+      msg += `${item}: ${stock}個\n`;
+    }
     await interaction.reply({ content: msg, flags: 64 });
   }
 });
