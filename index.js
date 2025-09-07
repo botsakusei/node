@@ -10,7 +10,6 @@ const {
   InteractionType
 } = pkg;
 import { REST } from "@discordjs/rest";
-import sqlite3 from "better-sqlite3";
 import fs from "fs";
 import fetch from "node-fetch";
 
@@ -18,7 +17,6 @@ import fetch from "node-fetch";
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID || process.env.DISCORD_GUILD_ID;
-const DB_FILE = "/mnt/volume/delta_currency.db";
 const GACHA_ANIMATION_PATH = "free_gacha_animation.gif";
 const GACHA_COST = 10;
 const CURRENCY_UNIT = "デルタ";
@@ -34,84 +32,28 @@ const ITEM_LIST = [
   "マグロノ中落チ"
 ];
 
-// DB初期化
-const db = sqlite3(DB_FILE);
-db.prepare(`CREATE TABLE IF NOT EXISTS currency (user_id TEXT PRIMARY KEY, balance INTEGER NOT NULL)`).run();
-db.prepare(`
-  CREATE TABLE IF NOT EXISTS gacha_history (
-    user_id TEXT,
-    result INTEGER,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`).run();
-db.prepare(`
-  CREATE TABLE IF NOT EXISTS item_stock (
-    item_name TEXT PRIMARY KEY,
-    stock INTEGER NOT NULL
-  )
-`).run();
-db.prepare(`
-  CREATE TABLE IF NOT EXISTS item_out_log (
-    user_id TEXT,
-    item_name TEXT,
-    count INTEGER,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`).run();
-db.prepare(`
-  CREATE TABLE IF NOT EXISTS item_in_log (
-    user_id TEXT,
-    item_name TEXT,
-    count INTEGER,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`).run();
-
-// 在庫初期化
-ITEM_LIST.forEach(item => {
-  const row = db.prepare("SELECT stock FROM item_stock WHERE item_name = ?").get(item);
-  if (!row) {
-    db.prepare("INSERT INTO item_stock (item_name, stock) VALUES (?, ?)").run(item, 0);
-  }
-});
-
-// 関数定義
+// 関数定義（DB関係削除）
 function getBalance(uid) {
-  const row = db.prepare("SELECT balance FROM currency WHERE user_id = ?").get(uid);
-  return row ? row.balance : 0;
+  return 0;
 }
 function addBalance(uid, amt) {
-  const n = getBalance(uid) + amt;
-  db.prepare("INSERT OR REPLACE INTO currency (user_id, balance) VALUES (?, ?)").run(uid, n);
-  return n;
+  return amt;
 }
 function subBalance(uid, amt) {
-  const n = Math.max(0, getBalance(uid) - amt);
-  db.prepare("UPDATE currency SET balance = ? WHERE user_id = ?").run(n, uid);
-  return n;
+  return 0;
 }
-function addGachaHistory(uid, result) {
-  db.prepare("INSERT INTO gacha_history (user_id, result) VALUES (?, ?)").run(uid, result);
-}
+function addGachaHistory(uid, result) {}
 function getGachaHistory(uid, limit = 10) {
-  return db.prepare("SELECT result, timestamp FROM gacha_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?").all(uid, limit);
+  return [];
 }
 function getItemStock(item) {
-  const row = db.prepare("SELECT stock FROM item_stock WHERE item_name = ?").get(item);
-  return row ? row.stock : 0;
+  return 0;
 }
 function addItemStock(uid, item, count, date = null) {
-  const curr = getItemStock(item);
-  db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(curr + count, item);
-  db.prepare("INSERT INTO item_in_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(uid, item, count, date || new Date().toISOString());
-  return curr + count;
+  return count;
 }
 function outItemStock(uid, item, count, date = null) {
-  const curr = getItemStock(item);
-  const newStock = Math.max(0, curr - count);
-  db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(newStock, item);
-  db.prepare("INSERT INTO item_out_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(uid, item, count, date || new Date().toISOString());
-  return newStock;
+  return 0;
 }
 
 // csvimportコマンド（CSV添付で一括登録）
@@ -150,7 +92,6 @@ async function registerCommands() {
       .addIntegerOption(option => option.setName("count").setDescription("出庫数").setRequired(true)),
     new SlashCommandBuilder().setName("在庫").setDescription("商品在庫を一覧表示"),
     new SlashCommandBuilder().setName("csvimport").setDescription("入出庫CSVファイルを添付して一括登録"),
-    // userlogimgコマンド削除済み
     new SlashCommandBuilder().setName("alluserlog").setDescription("DBに登録された全ユーザー分の入庫・出庫数を分割して出力")
   ].map(cmd => cmd.toJSON());
 
@@ -176,91 +117,45 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // userlogimgコマンド関連処理削除済み
-
-  // alluserlogコマンド（全ユーザー分分割して出力。重複商品名なしで1行に集計）
+  // alluserlogコマンド（DB関係削除）
   if (interaction.commandName === "alluserlog") {
-    let allNames = db.prepare("SELECT DISTINCT user_id FROM item_in_log UNION SELECT DISTINCT user_id FROM item_out_log").all();
-    if (allNames.length === 0) {
-      await interaction.reply("登録データがありません。");
-      return;
-    }
-
-    const displayItems = ITEM_LIST;
-
-    let msgArray = [];
-    for (const obj of allNames) {
-      const name = obj.user_id;
-      let inlog = db.prepare("SELECT item_name, count FROM item_in_log WHERE user_id = ?").all(name);
-      let outlog = db.prepare("SELECT item_name, count FROM item_out_log WHERE user_id = ?").all(name);
-
-      let itemSums = {};
-      for (let item of displayItems) {
-        itemSums[item] = { in: 0, out: 0 };
-      }
-      for (let obj of inlog) {
-        if (itemSums[obj.item_name] !== undefined) itemSums[obj.item_name].in += obj.count;
-      }
-      for (let obj of outlog) {
-        if (itemSums[obj.item_name] !== undefined) itemSums[obj.item_name].out += obj.count;
-      }
-
-      let header = `ユーザー: ${name}\n`;
-      header += "商品名".padEnd(14) + "入庫数".padStart(8) + "出庫数".padStart(8) + "\n";
-      let msg = header;
-      for (let item of displayItems) {
-        const sums = itemSums[item];
-        msg += item.padEnd(14) +
-               String(sums.in).padStart(8) +
-               String(sums.out).padStart(8) + "\n";
-      }
-      msgArray.push(msg);
-    }
-
-    for (let i = 0; i < msgArray.length; i++) {
-      if (i === 0) {
-        await interaction.reply({ content: msgArray[i] });
-      } else {
-        await interaction.followUp({ content: msgArray[i] });
-      }
-    }
+    await interaction.reply("登録データがありません。");
     return;
   }
 
   // 既存の各種コマンド
-if (interaction.commandName === "ガチャ") {
-  let bal = getBalance(uid);
-  if (bal < GACHA_COST) {
-    await interaction.reply({ content: `残高不足！（${bal}${CURRENCY_UNIT}）`, ephemeral: true });
-    return;
+  if (interaction.commandName === "ガチャ") {
+    let bal = getBalance(uid);
+    if (bal < GACHA_COST) {
+      await interaction.reply({ content: `残高不足！（${bal}${CURRENCY_UNIT}）`, ephemeral: true });
+      return;
+    }
+    subBalance(uid, GACHA_COST);
+    const nb = getBalance(uid);
+
+    // 名前リスト・ガチャ動画パス
+    const NAME_LIST = ["Aさん", "Bさん", "Cさん"];
+    const resultName = NAME_LIST[Math.floor(Math.random() * NAME_LIST.length)];
+    const videoPath = `gatyadouga/${resultName}.mp4`;
+
+    let message = `ガチャを回します…\n`;
+    let files = [];
+    if (fs.existsSync(videoPath)) {
+      files.push(videoPath);
+    } else {
+      message += "演出動画なし\n";
+    }
+
+    // ガチャ結果
+    message += `結果: ${resultName}！残高: ${nb}${CURRENCY_UNIT}`;
+    addGachaHistory(uid, resultName);
+
+    await interaction.reply({
+      content: message,
+      files,
+      ephemeral: true
+    });
   }
-  subBalance(uid, GACHA_COST);
-  const nb = getBalance(uid);
-
-  // 名前リスト・ガチャ動画パス
-  const NAME_LIST = ["Aさん", "Bさん", "Cさん"];
-  const resultName = NAME_LIST[Math.floor(Math.random() * NAME_LIST.length)];
-  const videoPath = `gatyadouga/${resultName}.mp4`;
-
-  let message = `ガチャを回します…\n`;
-  let files = [];
-  if (fs.existsSync(videoPath)) {
-    files.push(videoPath);
-  } else {
-    message += "演出動画なし\n";
-  }
-
-  // ガチャ結果
-  message += `結果: ${resultName}！残高: ${nb}${CURRENCY_UNIT}`;
-  addGachaHistory(uid, resultName);
-
-  // 本人だけへのエフェメラル返信
-  await interaction.reply({
-    content: message,
-    files,
-    ephemeral: true
-  });
-}
 
   if (interaction.commandName === "残高") {
     let bal = getBalance(uid);
@@ -350,7 +245,7 @@ if (interaction.commandName === "ガチャ") {
   }
 });
 
-// メッセージでcsvファイル添付を受信
+// メッセージでcsvファイル添付を受信（DB関係削除）
 client.on("messageCreate", async message => {
   if (
     !CSV_IMPORT_STATE.waiting ||
@@ -376,55 +271,9 @@ client.on("messageCreate", async message => {
     return;
   }
 
-  const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
-  let success = 0, failed = 0, errors = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (i === 0 && /日付|date|user|item|type|value/i.test(line)) continue;
-    let parts = line.split(",");
-    if (parts.length < 5) parts = line.split("\t");
-    if (parts.length < 5) {
-      failed++;
-      errors.push(`パース失敗: ${line}`);
-      continue;
-    }
-    const [date, user, item, type, valueRaw] = parts;
-    let value = parseInt(valueRaw.replace(/[^0-9\-]/g, ""), 10);
-    if (isNaN(value)) {
-      failed++;
-      errors.push(`数値変換失敗: ${line}`);
-      continue;
-    }
-    let validItem = ITEM_LIST.includes(item) ? item : null;
-    if (!validItem) {
-      validItem = item;
-      const row = db.prepare("SELECT stock FROM item_stock WHERE item_name = ?").get(validItem);
-      if (!row) db.prepare("INSERT INTO item_stock (item_name, stock) VALUES (?, ?)").run(validItem, 0);
-      if (!ITEM_LIST.includes(validItem)) ITEM_LIST.push(validItem);
-    }
-    if (type === "在庫" || type === "入庫") {
-      if (type === "在庫") {
-        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(value, validItem);
-      } else {
-        const before = getItemStock(validItem);
-        db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem);
-      }
-      db.prepare("INSERT INTO item_in_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
-      success++;
-    } else if (type === "出庫") {
-      const before = getItemStock(validItem);
-      db.prepare("UPDATE item_stock SET stock = ? WHERE item_name = ?").run(before + value, validItem); // valueはマイナス
-      db.prepare("INSERT INTO item_out_log (user_id, item_name, count, timestamp) VALUES (?, ?, ?, ?)").run(user, validItem, value, date);
-      success++;
-    } else {
-      failed++;
-      errors.push(`種別不明: ${line}`);
-    }
-  }
-
+  // CSVパース・登録は何もしない（DBなし）
   await message.reply(
-    `CSVインポート完了: 成功 ${success}件, 失敗 ${failed}件。\n` +
-    (errors.length ? `エラー:\n${errors.join("\n")}` : "")
+    `CSVインポート完了: 成功 0件, 失敗 0件。\n（データベース機能は無効化されています）`
   );
   CSV_IMPORT_STATE.waiting = false;
 });
