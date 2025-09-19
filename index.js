@@ -46,7 +46,6 @@ client.on('messageCreate', async (message) => {
       await video.save();
       await message.reply(
         `番号${num}の動画URL: ${url}\n` +
-        `この動画はこれまでに${video.count}回売れました。\n` +
         (video.owner ? `所有者: ${video.owner}` : '所有者未登録')
       );
     } else {
