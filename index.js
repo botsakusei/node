@@ -2,6 +2,7 @@ import { Client, GatewayIntentBits } from 'discord.js';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import YoutubeCount from './models/YoutubeCount.js';
+import express from 'express';
 
 dotenv.config();
 
@@ -9,7 +10,7 @@ const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
 const MONGODB_URI = process.env.MONGODB_URI;
 
-// 1～60の番号に対応するYouTube URL（例）
+// YouTube URL割り当て（例：1～60）
 const numberToYoutubeUrl = {};
 for (let i = 1; i <= 60; i++) {
     numberToYoutubeUrl[i] = `https://www.youtube.com/watch?v=xxxxxxx${i}`;
@@ -25,6 +26,7 @@ mongoose.connect(MONGODB_URI, {
     console.error('MongoDB connection error:', e);
 });
 
+// Discord Bot初期化
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -50,7 +52,10 @@ client.on('messageCreate', async (message) => {
             }
             await record.save();
 
-            await message.reply(`番号${num}に割り当てられたYouTube動画はこちら: ${url}\nこの動画URLはこれまでに${record.count}回出力されています。`);
+            await message.reply(
+                `番号${num}に割り当てられたYouTube動画はこちら: ${url}\n` +
+                `この動画URLはこれまでに${record.count}回出力されています。`
+            );
         } else {
             await message.reply(`番号${num}にはまだURLが割り当てられていません。`);
         }
@@ -58,3 +63,11 @@ client.on('messageCreate', async (message) => {
 });
 
 client.login(TOKEN);
+
+// ダミーHTTPサーバーでKoyebのTCPヘルスチェック対策
+const app = express();
+app.get('/', (req, res) => res.send('Bot is running!'));
+const PORT = 8000;
+app.listen(PORT, () => {
+    console.log(`Dummy server listening on port ${PORT}`);
+});
