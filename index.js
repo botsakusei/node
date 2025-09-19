@@ -12,7 +12,7 @@ const MONGODB_URI = process.env.MONGODB_URI;
 
 // 管理者のDiscordユーザーID（必要に応じて追加・変更）
 const ADMIN_IDS = [
-    '123456789012345678', // ←管理者IDをここに記入
+    '1365266032272605324', // ←管理者IDをここに記入
     // '987654321098765432',
 ];
 
