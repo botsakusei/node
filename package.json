@@ -1,36 +1,15 @@
 {
   "name": "discord-gacha-bot",
   "version": "1.0.0",
-  "main": "index.js",
   "type": "module",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@discordjs/rest": "^1.7.1",
-    "@supabase/supabase-js": "^2.57.2",
-    "better-sqlite3": "^9.0.0",
-    "canvas": "^3.2.0",
-    "discord.js": "^14.22.1",
-    "dotenv": "^16.6.1",
-    "mongodb": "^6.19.0",
-<<<<<<< HEAD
-    "mongoose": "^8.18.1",
-=======
-    "mongoose": "^7.6.0",
->>>>>>> 885e4dfb551a2defbe3605abba86408ef9f3d5d5
-    "node-fetch": "^3.3.2"
-  },
-  "description": "",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/botsakusei/node.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/botsakusei/node/issues"
-  },
-  "homepage": "https://github.com/botsakusei/node#readme"
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongoose": "^7.8.7"
+  }
 }
