@@ -1,9 +1,9 @@
-import { Schema, model } from 'mongoose';
+const { Schema, model } = require('mongoose');
 
 const YoutubeVideoSchema = new Schema({
-  url: { type: String, required: true, unique: true },
-  owner: { type: String, default: '' },
-  count: { type: Number, default: 0 }
+  url: { type: String, required: true, unique: true }, // 動画URL主キー
+  owner: { type: String, default: '' },                // 所有者（ユーザー名）
+  count: { type: Number, default: 0 }                  // 売上数
 });
 
-export default model('YoutubeVideo', YoutubeVideoSchema);
+module.exports = model('YoutubeVideo', YoutubeVideoSchema);
