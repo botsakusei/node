@@ -3,10 +3,10 @@ import mongoose from 'mongoose';
 import YoutubeVideo from './models/YoutubeVideo.js';
 import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
 
-const TOKEN = 'YOUR_DISCORD_BOT_TOKEN';
-const MONGODB_URI = 'YOUR_MONGODB_URI';
-const TARGET_CHANNEL_ID = 'YOUR_CHANNEL_ID';
-const ADMIN_IDS = ['管理者のDiscordID1', '管理者のDiscordID2'];
+const TOKEN = 'YOUR_DISCORD_BOT_TOKEN';        // あなたのDiscord bot tokenに変更
+const MONGODB_URI = 'YOUR_MONGODB_URI';        // あなたのMongoDB URIに変更
+const TARGET_CHANNEL_ID = 'YOUR_CHANNEL_ID';   // 売上集計したいチャンネルIDに変更
+const ADMIN_IDS = ['管理者のDiscordID1'];      // 管理者のDiscordユーザーID(複数可)
 
 const client = new Client({ intents: [
   GatewayIntentBits.Guilds,
@@ -75,7 +75,6 @@ client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand()) return;
   const { commandName } = interaction;
 
-  // 代理登録
   if (commandName === '代理登録') {
     await interaction.deferReply();
     const url = interaction.options.getString('動画url');
@@ -90,7 +89,6 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.editReply(`動画URL: ${url} の所有者を ${owner} に登録しました。`);
   }
 
-  // 売上ランキング
   if (commandName === '売上') {
     await interaction.deferReply();
     const videos = await YoutubeVideo.find({});
@@ -108,7 +106,6 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.editReply(replyMsg || '登録ユーザーがいません');
   }
 
-  // 売上リセット（ユーザー指定・管理者のみ）
   if (commandName === '売上リセット') {
     await interaction.deferReply();
     if (!ADMIN_IDS.includes(interaction.user.id)) {
@@ -124,13 +121,11 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.editReply(`${owner}さんの全動画売上をリセットしました。`);
   }
 
-  // 動画シャッフル（管理者のみ）
   if (commandName === '動画シャッフル') {
     await interaction.deferReply();
     if (!ADMIN_IDS.includes(interaction.user.id)) {
       return interaction.editReply('このコマンドは管理者だけが実行できます。');
     }
-    // シャッフル処理
     const urls = Object.values(numberToYoutubeUrl);
     const shuffled = urls.sort(() => Math.random() - 0.5);
     Object.keys(numberToYoutubeUrl).forEach((num, idx) => {
@@ -140,7 +135,6 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// スラッシュコマンド登録（初回のみ）
 client.on('ready', async () => {
   const guild = client.guilds.cache.first();
   if (!guild) return;
@@ -148,7 +142,6 @@ client.on('ready', async () => {
   console.log('Slash commands registered');
 });
 
-// MongoDB接続
 mongoose.connect(MONGODB_URI)
   .then(() => {
     console.log('MongoDB connected');
