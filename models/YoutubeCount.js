@@ -1,9 +1,10 @@
-const { Schema, model } = require('mongoose');
+import mongoose from 'mongoose';
 
-const YoutubeVideoSchema = new Schema({
-  url: { type: String, required: true, unique: true }, // 動画URL主キー
-  owner: { type: String, default: '' },                // 所有者（ユーザー名）
-  count: { type: Number, default: 0 }                  // 売上数
+const YoutubeVideoSchema = new mongoose.Schema({
+  url: { type: String, required: true, unique: true },
+  owner: { type: String, default: '' },
+  count: { type: Number, default: 0 }
 });
 
-module.exports = model('YoutubeVideo', YoutubeVideoSchema);
+const YoutubeVideo = mongoose.model('YoutubeVideo', YoutubeVideoSchema);
+export default YoutubeVideo;
