@@ -12,12 +12,9 @@ app.listen(PORT, () => {
 import { Client, GatewayIntentBits, Collection } from 'discord.js';
 import mongoose from 'mongoose';
 
-// YoutubeVideoモデル
 import YoutubeVideo from './models/YoutubeVideo.js';
-// 番号 → Youtube URLマッピング
 import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
 
-// 環境変数で各種設定を管理
 const MONGODB_URI = process.env.MONGODB_URI;
 const TOKEN = process.env.TOKEN;
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
@@ -33,7 +30,6 @@ client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-// 売上カウント（番号メッセージ送信）
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (message.channel.id !== TARGET_CHANNEL_ID) return;
@@ -59,12 +55,11 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// スラッシュコマンド登録
 client.commands = new Collection();
 const commands = [
   {
     name: '代理登録',
-    description: '動画URLの所有者を登録',
+    description: '動画URLの所有者を登録（管理者のみ）',
     options: [
       { type: 3, name: '動画url', description: '動画URL', required: true },
       { type: 3, name: 'ユーザー名', description: '所有者名', required: true }
@@ -91,7 +86,7 @@ const commands = [
   },
   {
     name: '動画一覧',
-    description: '登録されている動画URLの一覧を表示'
+    description: '登録されている動画URLの一覧を表示（管理者のみ）'
   }
 ];
 
@@ -99,9 +94,12 @@ client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand()) return;
   const { commandName } = interaction;
 
-  // 代理登録
+  // 代理登録（管理者のみ）
   if (commandName === '代理登録') {
     await interaction.deferReply();
+    if (!ADMIN_IDS.includes(interaction.user.id)) {
+      return interaction.editReply('このコマンドは管理者のみ実行できます。');
+    }
     const url = interaction.options.getString('動画url');
     const owner = interaction.options.getString('ユーザー名');
     if (!url) {
@@ -117,7 +115,7 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.editReply(`動画URL: ${url} の所有者を ${owner} に登録しました。`);
   }
 
-  // 売上ランキング
+  // 売上ランキング（誰でも見れる）
   if (commandName === '売上') {
     await interaction.deferReply();
     const videos = await YoutubeVideo.find({});
@@ -179,9 +177,12 @@ client.on('interactionCreate', async (interaction) => {
     return interaction.editReply('全動画の売上をリセットしました。');
   }
 
-  // 動画一覧表示コマンド
+  // 動画一覧表示（管理者のみ）
   if (commandName === '動画一覧') {
     await interaction.deferReply();
+    if (!ADMIN_IDS.includes(interaction.user.id)) {
+      return interaction.editReply('このコマンドは管理者のみ実行できます。');
+    }
     const videos = await YoutubeVideo.find({});
     if (videos.length === 0) {
       return interaction.editReply('登録されている動画はありません。');
@@ -194,7 +195,6 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// コマンド登録（ready時）
 client.on('ready', async () => {
   const guild = client.guilds.cache.first();
   if (!guild) return;
@@ -202,7 +202,6 @@ client.on('ready', async () => {
   console.log('Slash commands registered');
 });
 
-// MongoDB接続
 mongoose.connect(MONGODB_URI)
   .then(() => {
     console.log('MongoDB connected');
