@@ -63,7 +63,8 @@ const commands = [
     options: [
       { type: 3, name: '動画url', description: '動画URL', required: true },
       { type: 3, name: 'ユーザー名', description: '所有者名', required: true }
-    ]
+    ],
+    default_member_permissions: 'Administrator'
   },
   {
     name: '売上',
@@ -74,19 +75,28 @@ const commands = [
     description: '指定ユーザーの売上をリセット（管理者のみ）',
     options: [
       { type: 3, name: 'ユーザー名', description: 'リセットする所有者名', required: true }
-    ]
+    ],
+    default_member_permissions: 'Administrator'
   },
   {
     name: '動画シャッフル',
-    description: '番号と動画URLの割り当てをランダムシャッフル（管理者のみ）'
+    description: '番号と動画URLの割り当てをランダムシャッフル（管理者のみ）',
+    default_member_permissions: 'Administrator'
   },
   {
     name: '全売上リセット',
-    description: '全動画の売上をリセット（管理者のみ）'
+    description: '全動画の売上をリセット（管理者のみ）',
+    default_member_permissions: 'Administrator'
   },
   {
     name: '動画一覧',
-    description: '登録されている動画URLの一覧を表示（管理者のみ）'
+    description: '登録されている動画URLの一覧を表示（管理者のみ）',
+    default_member_permissions: 'Administrator'
+  },
+  {
+    name: '割り当て一覧',
+    description: '現在の番号の動画割り当てと所有者一覧（管理者のみ）',
+    default_member_permissions: 'Administrator'
   }
 ];
 
@@ -97,7 +107,8 @@ client.on('interactionCreate', async (interaction) => {
   // 代理登録（管理者のみ）
   if (commandName === '代理登録') {
     await interaction.deferReply();
-    if (!ADMIN_IDS.includes(interaction.user.id)) {
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    if (!member.permissions.has('Administrator')) {
       return interaction.editReply('このコマンドは管理者のみ実行できます。');
     }
     const url = interaction.options.getString('動画url');
@@ -136,7 +147,8 @@ client.on('interactionCreate', async (interaction) => {
   // 売上リセット（ユーザー指定・管理者のみ）
   if (commandName === '売上リセット') {
     await interaction.deferReply();
-    if (!ADMIN_IDS.includes(interaction.user.id)) {
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    if (!member.permissions.has('Administrator')) {
       return interaction.editReply('このコマンドは管理者のみ実行できます。');
     }
     const owner = interaction.options.getString('ユーザー名');
@@ -152,7 +164,8 @@ client.on('interactionCreate', async (interaction) => {
   // 動画シャッフル（管理者のみ）
   if (commandName === '動画シャッフル') {
     await interaction.deferReply();
-    if (!ADMIN_IDS.includes(interaction.user.id)) {
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    if (!member.permissions.has('Administrator')) {
       return interaction.editReply('このコマンドは管理者だけが実行できます。');
     }
     const urls = Object.values(numberToYoutubeUrl);
@@ -166,7 +179,8 @@ client.on('interactionCreate', async (interaction) => {
   // 全売上リセット（管理者のみ）
   if (commandName === '全売上リセット') {
     await interaction.deferReply();
-    if (!ADMIN_IDS.includes(interaction.user.id)) {
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    if (!member.permissions.has('Administrator')) {
       return interaction.editReply('このコマンドは管理者のみ実行できます。');
     }
     const videos = await YoutubeVideo.find({});
@@ -180,7 +194,8 @@ client.on('interactionCreate', async (interaction) => {
   // 動画一覧表示（管理者のみ）
   if (commandName === '動画一覧') {
     await interaction.deferReply();
-    if (!ADMIN_IDS.includes(interaction.user.id)) {
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    if (!member.permissions.has('Administrator')) {
       return interaction.editReply('このコマンドは管理者のみ実行できます。');
     }
     const videos = await YoutubeVideo.find({});
@@ -192,6 +207,27 @@ client.on('interactionCreate', async (interaction) => {
       replyMsg += `${idx + 1}. ${v.url}${v.owner ? `（所有者: ${v.owner}）` : ''}\n`;
     });
     return interaction.editReply(replyMsg);
+  }
+
+  // 割り当て一覧（管理者のみ）
+  if (commandName === '割り当て一覧') {
+    await interaction.deferReply();
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    if (!member.permissions.has('Administrator')) {
+      return interaction.editReply('このコマンドは管理者のみ実行できます。');
+    }
+    let replyMsg = '現在の動画割り当て一覧:\n';
+    for (let num = 1; num <= 60; num++) {
+      const url = numberToYoutubeUrl[num];
+      if (!url) continue;
+      const video = await YoutubeVideo.findOne({ url });
+      replyMsg += `${num}: ${url}`;
+      if (video && video.owner) {
+        replyMsg += `（所有者: ${video.owner}）`;
+      }
+      replyMsg += '\n';
+    }
+    await interaction.editReply(replyMsg);
   }
 });
 
