@@ -1,11 +1,12 @@
-const { Client, GatewayIntentBits, Collection } = require('discord.js');
-const mongoose = require('mongoose');
-const YoutubeVideo = require('./models/YoutubeVideo');
-const numberToYoutubeUrl = require('./config/numberToYoutubeUrl');
-const TOKEN = 'YOUR_DISCORD_BOT_TOKEN';        // ←自分のBOTトークンに変更
-const MONGODB_URI = 'YOUR_MONGODB_URI';        // ←自分のMongoDB接続URIに変更
-const TARGET_CHANNEL_ID = 'YOUR_CHANNEL_ID';   // ←売上集計チャンネルIDに変更
-const ADMIN_IDS = ['管理者のDiscordID1', '管理者のDiscordID2']; // 管理者DiscordID
+import { Client, GatewayIntentBits, Collection } from 'discord.js';
+import mongoose from 'mongoose';
+import YoutubeVideo from './models/YoutubeVideo.js';
+import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
+
+const TOKEN = 'YOUR_DISCORD_BOT_TOKEN';
+const MONGODB_URI = 'YOUR_MONGODB_URI';
+const TARGET_CHANNEL_ID = 'YOUR_CHANNEL_ID';
+const ADMIN_IDS = ['管理者のDiscordID1', '管理者のDiscordID2'];
 
 const client = new Client({ intents: [
   GatewayIntentBits.Guilds,
@@ -43,7 +44,6 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// スラッシュコマンド登録
 client.commands = new Collection();
 const commands = [
   {
