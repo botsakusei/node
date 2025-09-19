@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const YoutubeVideoSchema = new mongoose.Schema({
   url: { type: String, required: true, unique: true },
