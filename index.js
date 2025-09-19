@@ -5,7 +5,7 @@ import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
 
 // ▼▼▼ MongoDB接続URIは必ず「mongodb://」または「mongodb+srv://」で始める ▼▼▼
 // ローカルMongoDBの場合（例）:
-const MONGODB_URI = 'mongodb://localhost:27017/mydatabase';
+const MONGODB_URI = 'mongodb+srv://kn2030kn03_db_user:gombee001@cluster0.udgmw6h.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
 // MongoDB Atlasの場合（コメントアウトを外して自分の情報に書き換え）:
 /*
 const MONGODB_URI = 'mongodb+srv://<user>:<password>@<cluster>.mongodb.net/<dbname>?retryWrites=true&w=majority';
