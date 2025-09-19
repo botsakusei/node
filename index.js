@@ -126,7 +126,7 @@ client.on('interactionCreate', async (interaction) => {
         userSales[v.owner] += v.count;
       }
     });
-    let replyMsg = '動画販売ランキング:\n';
+    let replyMsg = '動画販売数（販売数×８００万）:\n';
     Object.entries(userSales).forEach(([u, c]) => {
       replyMsg += `${u}: ${c}本\n`;
     });
