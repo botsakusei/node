@@ -51,20 +51,8 @@ const client = new Client({
     ]
 });
 
-// スラッシュコマンド定義一覧（日本語）
+// スラッシュコマンド定義一覧（/登録を削除済み）
 const commands = [
-    {
-        name: '登録',
-        description: '自分の動画を登録します',
-        options: [
-            {
-                name: '番号',
-                description: '動画番号',
-                type: 4, // INTEGER
-                required: true
-            }
-        ]
-    },
     {
         name: '代理登録',
         description: '管理者が他ユーザーの動画を代理登録します',
@@ -114,7 +102,7 @@ const commands = [
 ];
 
 // コマンド登録（Bot起動時に一度だけ実行）
-client.once('ready', async () => {
+client.once('clientReady', async () => {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
         await rest.put(
@@ -128,39 +116,23 @@ client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}`);
 });
 
-// スラッシュコマンドイベント
+// スラッシュコマンドイベント（/登録は削除）
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isCommand()) return;
 
     const { commandName, options, user } = interaction;
 
-    // !登録 <番号>
-    if (commandName === '登録') {
-        const num = options.getInteger('番号');
-        const owner = user.username;
-        const url = numberToYoutubeUrl[num];
-        if (!url) return interaction.reply({ content: 'その番号には動画がありません', ephemeral: true });
-        let record = await YoutubeCount.findOne({ number: num });
-        if (!record) {
-            record = new YoutubeCount({ url, count: 0, owner, number: num });
-        } else {
-            record.owner = owner;
-            record.url = url;
-        }
-        await record.save();
-        return interaction.reply(`番号${num}の動画を「${owner}」に紐づけしました。`);
-    }
-
-    // !代理登録 <番号> <ユーザーネーム>
+    // /代理登録
     if (commandName === '代理登録') {
+        await interaction.deferReply();
         const authorId = user.id;
         if (!ADMIN_IDS.includes(authorId)) {
-            return interaction.reply({ content: 'このコマンドは管理者のみ実行できます。', ephemeral: true });
+            return interaction.editReply('このコマンドは管理者のみ実行できます。');
         }
         const num = options.getInteger('番号');
         const owner = options.getString('ユーザー名');
         const url = numberToYoutubeUrl[num];
-        if (!url) return interaction.reply({ content: 'その番号には動画がありません', ephemeral: true });
+        if (!url) return interaction.editReply('その番号には動画がありません');
         let record = await YoutubeCount.findOne({ number: num });
         if (!record) {
             record = new YoutubeCount({ url, count: 0, owner, number: num });
@@ -169,15 +141,15 @@ client.on('interactionCreate', async (interaction) => {
             record.url = url;
         }
         await record.save();
-        return interaction.reply(`管理者として、番号${num}の動画を「${owner}」に紐づけしました。`);
+        return interaction.editReply(`管理者として、番号${num}の動画を「${owner}」に紐づけしました。`);
     }
 
-    // !売上
+    // /売上
     if (commandName === '売上') {
+        await interaction.deferReply();
         const authorId = user.id;
         const authorName = user.username;
         if (ADMIN_IDS.includes(authorId)) {
-            // 管理者はランキング表示
             const records = await YoutubeCount.find({});
             const users = {};
             records.forEach(r => {
@@ -189,20 +161,19 @@ client.on('interactionCreate', async (interaction) => {
             Object.entries(users).forEach(([u, c]) => {
                 replyMsg += `${u}: ${c}本\n`;
             });
-            return interaction.reply(replyMsg || '登録ユーザーがいません');
+            return interaction.editReply(replyMsg || '登録ユーザーがいません');
         } else {
-            // 一般ユーザーは自分の動画のみ
             const records = await YoutubeCount.find({ owner: authorName });
             const total = records.reduce((sum, r) => sum + r.count, 0);
-            return interaction.reply(`あなた（${authorName}）の動画は合計${total}本売れました。`);
+            return interaction.editReply(`あなた（${authorName}）の動画は合計${total}本売れました。`);
         }
     }
 
-    // !動画変更 <番号>
+    // /動画変更
     if (commandName === '動画変更') {
+        await interaction.deferReply();
         const num = options.getInteger('番号');
-        if (!num || !(num >= 1 && num <= 60)) return interaction.reply({ content: '使い方: !動画変更 <番号>', ephemeral: true });
-        // ランダム番号取得（元と同じ番号もあり得ます）
+        if (!num || !(num >= 1 && num <= 60)) return interaction.editReply('使い方: /動画変更 番号');
         const randNum = Math.floor(Math.random() * 60) + 1;
         const newUrl = numberToYoutubeUrl[randNum];
         let record = await YoutubeCount.findOne({ number: num });
@@ -213,22 +184,20 @@ client.on('interactionCreate', async (interaction) => {
             record.owner = '';
         }
         await record.save();
-        return interaction.reply(`番号${num}の動画をランダムに変更しました。\n新しいURL: ${newUrl}`);
+        return interaction.editReply(`番号${num}の動画をランダムに変更しました。\n新しいURL: ${newUrl}`);
     }
 
-    // !売上リセット <ユーザーネーム>
+    // /売上リセット
     if (commandName === '売上リセット') {
+        await interaction.deferReply();
         const authorId = user.id;
         if (!ADMIN_IDS.includes(authorId)) {
-            return interaction.reply({ content: 'このコマンドは管理者のみ実行できます。', ephemeral: true });
+            return interaction.editReply('このコマンドは管理者のみ実行できます。');
         }
         const userName = options.getString('ユーザー名');
-        if (!userName) return interaction.reply({ content: '使い方: !売上リセット <ユーザーネーム>', ephemeral: true });
-        const result = await YoutubeCount.updateMany(
-            { owner: userName },
-            { $set: { count: 0 } }
-        );
-        return interaction.reply(`ユーザー「${userName}」の売上データをリセットしました。`);
+        if (!userName) return interaction.editReply('使い方: /売上リセット ユーザー名');
+        await YoutubeCount.updateMany({ owner: userName }, { $set: { count: 0 } });
+        return interaction.editReply(`ユーザー「${userName}」の売上データをリセットしました。`);
     }
 });
 
@@ -241,7 +210,6 @@ client.on('messageCreate', async (message) => {
     if (!isNaN(num) && num >= 1 && num <= 60) {
         const url = numberToYoutubeUrl[num];
         if (url) {
-            // MongoDBでカウントアップ
             let record = await YoutubeCount.findOne({ number: num });
             if (!record) {
                 record = new YoutubeCount({ url, count: 1, number: num });
