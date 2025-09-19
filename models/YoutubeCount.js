@@ -1,8 +1,9 @@
-import mongoose from 'mongoose';
+import { Schema, model } from 'mongoose';
 
-const YoutubeCountSchema = new mongoose.Schema({
-    url: { type: String, required: true, unique: true },
-    count: { type: Number, default: 0 },
+const YoutubeVideoSchema = new Schema({
+  url: { type: String, required: true, unique: true },
+  owner: { type: String, default: '' },
+  count: { type: Number, default: 0 }
 });
 
-export default mongoose.model('YoutubeCount', YoutubeCountSchema);
+export default model('YoutubeVideo', YoutubeVideoSchema);
