@@ -1,4 +1,16 @@
 import { Client, GatewayIntentBits } from 'discord.js';
+import dotenv from 'dotenv';
+dotenv.config();
+
+// 環境変数から取得
+const TOKEN = process.env.DISCORD_BOT_TOKEN;
+const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
+
+// 1～60の番号に対応するYouTube URL（例）
+const numberToYoutubeUrl = {};
+for (let i = 1; i <= 60; i++) {
+    numberToYoutubeUrl[i] = `https://www.youtube.com/watch?v=xxxxxxx${i}`;
+}
 
 const client = new Client({
     intents: [
@@ -7,14 +19,6 @@ const client = new Client({
         GatewayIntentBits.MessageContent
     ]
 });
-
-const numberToYoutubeUrl = {
-    1: 'https://www.youtube.com/watch?v=xxxxxxx1',
-    2: 'https://www.youtube.com/watch?v=xxxxxxx2',
-    // ... 3～60まで
-};
-
-const TARGET_CHANNEL_ID = 'CHANNEL_ID'; // 実際のIDに変更
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
@@ -31,4 +35,4 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-client.login('YOUR_BOT_TOKEN');
+client.login(TOKEN);
