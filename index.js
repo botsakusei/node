@@ -11,7 +11,10 @@ app.listen(PORT, () => {
 
 import { Client, GatewayIntentBits, Collection } from 'discord.js';
 import mongoose from 'mongoose';
+
+// YoutubeVideoモデル
 import YoutubeVideo from './models/YoutubeVideo.js';
+// 番号 → Youtube URLマッピング
 import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
 
 // 環境変数で各種設定を管理
@@ -85,6 +88,10 @@ const commands = [
   {
     name: '全売上リセット',
     description: '全動画の売上をリセット（管理者のみ）'
+  },
+  {
+    name: '動画一覧',
+    description: '登録されている動画URLの一覧を表示'
   }
 ];
 
@@ -171,9 +178,23 @@ client.on('interactionCreate', async (interaction) => {
     }
     return interaction.editReply('全動画の売上をリセットしました。');
   }
+
+  // 動画一覧表示コマンド
+  if (commandName === '動画一覧') {
+    await interaction.deferReply();
+    const videos = await YoutubeVideo.find({});
+    if (videos.length === 0) {
+      return interaction.editReply('登録されている動画はありません。');
+    }
+    let replyMsg = '登録されている動画URL一覧:\n';
+    videos.forEach((v, idx) => {
+      replyMsg += `${idx + 1}. ${v.url}${v.owner ? `（所有者: ${v.owner}）` : ''}\n`;
+    });
+    return interaction.editReply(replyMsg);
+  }
 });
 
-// スラッシュコマンド登録（初回のみ）
+// コマンド登録（ready時）
 client.on('ready', async () => {
   const guild = client.guilds.cache.first();
   if (!guild) return;
