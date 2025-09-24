@@ -19,7 +19,7 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const TOKEN = process.env.TOKEN;
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',') : [];
-const TOTAL_SALES_RESET_IDS = process.env.TOTAL_SALES_RESET_IDS ? process.env.TOTAL_SALES_RESET_IDS.split(',') : []; // 累計売上リセット許可ID
+const TOTAL_SALES_RESET_IDS = process.env.TOTAL_SALES_RESET_IDS ? process.env.TOTAL_SALES_RESET_IDS.split(',') : [];
 
 const client = new Client({ intents: [
   GatewayIntentBits.Guilds,
@@ -83,7 +83,7 @@ const commands = [
   },
   {
     name: '累計売上変更',
-    description: '累計売上を変更（管理者のみ、ユーザー名指定）',
+    description: '指定ユーザーの累計売上を変更（管理者のみ）',
     options: [
       { type: 3, name: 'ユーザー名', description: '所有者名', required: true },
       { type: 4, name: '売上数', description: '新しい累計売上数', required: true }
@@ -156,7 +156,7 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 累計売上変更（管理者のみ、ユーザー名指定）
+    // 累計売上変更（管理者のみ、ユーザー名指定で全動画の合計を揃える）
     if (commandName === '累計売上変更') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         await interaction.editReply('このコマンドは管理者のみ実行できます。');
@@ -173,11 +173,18 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply('指定した所有者名の動画が見つかりません。');
         return;
       }
-      for (const video of videos) {
-        video.totalCount = newCount;
-        await video.save();
+      // すべての動画の合計を newCount に揃える（分配方法はここでは最初の動画に全部入れる例）
+      // 必要に応じて分配方式を変更してください
+      let remaining = newCount;
+      for (let i = 0; i < videos.length; i++) {
+        if (i === 0) {
+          videos[i].totalCount = remaining;
+        } else {
+          videos[i].totalCount = 0;
+        }
+        await videos[i].save();
       }
-      await interaction.editReply(`所有者: ${owner} の全動画の累計売上を${newCount}本に変更しました。`);
+      await interaction.editReply(`所有者: ${owner} の累計売上を合計 ${newCount}本に変更しました（最初の動画にのみ反映）。`);
       return;
     }
 
