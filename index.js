@@ -68,29 +68,12 @@ const commands = [
     default_member_permissions: PermissionFlagsBits.Administrator.toString()
   },
   {
-    name: '売上',
-    description: '売上ランキングをファイルで出力'
-  },
-  {
     name: '累計売上',
     description: '所有者ごとの累計売上ランキングをファイルで出力'
   },
   {
-    name: '売上リセット',
-    description: '指定ユーザーの売上をリセット（管理者のみ）',
-    options: [
-      { type: 3, name: 'ユーザー名', description: 'リセットする所有者名', required: true }
-    ],
-    default_member_permissions: PermissionFlagsBits.Administrator.toString()
-  },
-  {
     name: '動画シャッフル',
     description: '番号と動画URLの割り当てをランダムシャッフル（管理者のみ）',
-    default_member_permissions: PermissionFlagsBits.Administrator.toString()
-  },
-  {
-    name: '全売上リセット',
-    description: '全動画の売上をリセット（管理者のみ）',
     default_member_permissions: PermissionFlagsBits.Administrator.toString()
   },
   {
@@ -126,12 +109,14 @@ client.on('interactionCreate', async (interaction) => {
     // 代理登録（管理者のみ）
     if (commandName === '代理登録') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
-        return await interaction.editReply('このコマンドは管理者のみ実行できます。');
+        await interaction.editReply('このコマンドは管理者のみ実行できます。');
+        return;
       }
       const url = interaction.options.getString('動画url');
       const owner = interaction.options.getString('ユーザー名');
       if (!url) {
-        return await interaction.editReply('動画URLが入力されていません。');
+        await interaction.editReply('動画URLが入力されていません。');
+        return;
       }
       let video = await YoutubeVideo.findOne({ url });
       if (!video) {
@@ -140,24 +125,7 @@ client.on('interactionCreate', async (interaction) => {
         video.owner = owner;
       }
       await video.save();
-      return await interaction.editReply(`動画URL: ${url} の所有者を ${owner} に登録しました。`);
-    }
-
-    // 売上ランキング（ファイル出力）
-    if (commandName === '売上') {
-      const videos = await YoutubeVideo.find({});
-      const userSales = {};
-      videos.forEach(v => {
-        if (v.owner) {
-          if (!userSales[v.owner]) userSales[v.owner] = 0;
-          userSales[v.owner] += v.count;
-        }
-      });
-      let replyMsg = '動画販売数（販売数×８００万）:\n';
-      Object.entries(userSales).forEach(([u, c]) => {
-        replyMsg += `${u}: ${c}本\n`;
-      });
-      await replyWithPossibleFile(interaction, replyMsg || '登録ユーザーがいません', 'sales.txt');
+      await interaction.editReply(`動画URL: ${url} の所有者を ${owner} に登録しました。`);
       return;
     }
 
@@ -179,68 +147,46 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 売上リセット（ユーザー指定・管理者のみ）
-    if (commandName === '売上リセット') {
-      if (!ADMIN_IDS.includes(interaction.user.id)) {
-        return await interaction.editReply('このコマンドは管理者のみ実行できます。');
-      }
-      const owner = interaction.options.getString('ユーザー名');
-      const videos = await YoutubeVideo.find({ owner });
-      if (videos.length === 0) return await interaction.editReply('そのユーザー名の動画が見つかりません。');
-      for (const v of videos) {
-        v.count = 0;
-        await v.save();
-      }
-      return await interaction.editReply(`${owner}さんの全動画売上をリセットしました。`);
-    }
-
     // 動画シャッフル（管理者のみ）
     if (commandName === '動画シャッフル') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
-        return await interaction.editReply('このコマンドは管理者だけが実行できます。');
+        await interaction.editReply('このコマンドは管理者だけが実行できます。');
+        return;
       }
       const urls = Object.values(numberToYoutubeUrl);
       const shuffled = urls.sort(() => Math.random() - 0.5);
       Object.keys(numberToYoutubeUrl).forEach((num, idx) => {
         numberToYoutubeUrl[num] = shuffled[idx];
       });
-      return await interaction.editReply('番号と動画URLの割り当てをランダムにシャッフルしました。');
-    }
-
-    // 全売上リセット（管理者のみ）
-    if (commandName === '全売上リセット') {
-      if (!ADMIN_IDS.includes(interaction.user.id)) {
-        return await interaction.editReply('このコマンドは管理者のみ実行できます。');
-      }
-      const videos = await YoutubeVideo.find({});
-      for (const v of videos) {
-        v.count = 0;
-        await v.save();
-      }
-      return await interaction.editReply('全動画の売上をリセットしました。');
+      await interaction.editReply('番号と動画URLの割り当てをランダムにシャッフルしました。');
+      return;
     }
 
     // 累計売上リセット（特定ユーザーのみ）
     if (commandName === '累計売上リセット') {
       if (!TOTAL_SALES_RESET_IDS.includes(interaction.user.id)) {
-        return await interaction.editReply('このコマンドは指定ユーザーのみ実行できます。');
+        await interaction.editReply('このコマンドは指定ユーザーのみ実行できます。');
+        return;
       }
       const videos = await YoutubeVideo.find({});
       for (const v of videos) {
         v.totalCount = 0;
         await v.save();
       }
-      return await interaction.editReply('全動画の累計売上をリセットしました。');
+      await interaction.editReply('全動画の累計売上をリセットしました。');
+      return;
     }
 
     // 動画一覧表示（管理者のみ・ファイル出力）
     if (commandName === '動画一覧') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
-        return await interaction.editReply('このコマンドは管理者のみ実行できます。');
+        await interaction.editReply('このコマンドは管理者のみ実行できます。');
+        return;
       }
       const videos = await YoutubeVideo.find({});
       if (videos.length === 0) {
-        return await interaction.editReply('登録されている動画はありません。');
+        await interaction.editReply('登録されている動画はありません。');
+        return;
       }
       let replyMsg = '登録されている動画URL一覧:\n';
       videos.forEach((v, idx) => {
@@ -253,7 +199,8 @@ client.on('interactionCreate', async (interaction) => {
     // 割り当て一覧（管理者のみ・ファイル出力）
     if (commandName === '割り当て一覧') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
-        return await interaction.editReply('このコマンドは管理者のみ実行できます。');
+        await interaction.editReply('このコマンドは管理者のみ実行できます。');
+        return;
       }
       let replyMsg = '現在の動画割り当て一覧:\n';
       for (let num = 1; num <= 60; num++) {
@@ -271,11 +218,13 @@ client.on('interactionCreate', async (interaction) => {
     }
   } catch (err) {
     console.error(err);
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply('エラーが発生しました');
-    } else {
-      await interaction.reply('エラーが発生しました');
-    }
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply('エラーが発生しました');
+      } else {
+        await interaction.reply('エラーが発生しました');
+      }
+    } catch (_) {}
   }
 });
 
