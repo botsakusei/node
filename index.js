@@ -83,9 +83,9 @@ const commands = [
   },
   {
     name: '累計売上変更',
-    description: '累計売上を変更（管理者のみ）',
+    description: '累計売上を変更（管理者のみ、ユーザー名指定）',
     options: [
-      { type: 3, name: '動画url', description: '動画URL', required: true },
+      { type: 3, name: 'ユーザー名', description: '所有者名', required: true },
       { type: 4, name: '売上数', description: '新しい累計売上数', required: true }
     ],
     default_member_permissions: PermissionFlagsBits.Administrator.toString()
@@ -156,26 +156,28 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 累計売上変更（管理者のみ）
+    // 累計売上変更（管理者のみ、ユーザー名指定）
     if (commandName === '累計売上変更') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         await interaction.editReply('このコマンドは管理者のみ実行できます。');
         return;
       }
-      const url = interaction.options.getString('動画url');
+      const owner = interaction.options.getString('ユーザー名');
       const newCount = interaction.options.getInteger('売上数');
       if (typeof newCount !== 'number' || newCount < 0) {
         await interaction.editReply('売上数は0以上の整数で指定してください。');
         return;
       }
-      let video = await YoutubeVideo.findOne({ url });
-      if (!video) {
-        await interaction.editReply('指定された動画URLが見つかりません。');
+      const videos = await YoutubeVideo.find({ owner });
+      if (!videos.length) {
+        await interaction.editReply('指定した所有者名の動画が見つかりません。');
         return;
       }
-      video.totalCount = newCount;
-      await video.save();
-      await interaction.editReply(`動画URL: ${url} の累計売上を ${newCount}本に変更しました。`);
+      for (const video of videos) {
+        video.totalCount = newCount;
+        await video.save();
+      }
+      await interaction.editReply(`所有者: ${owner} の全動画の累計売上を${newCount}本に変更しました。`);
       return;
     }
 
