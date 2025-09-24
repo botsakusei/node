@@ -41,7 +41,7 @@ const numberToYoutubeUrl = {
   40: "https://youtu.be/qACyzGL8CWg",
   41: "https://youtu.be/wcirEMqcF5o",
   42: "https://youtu.be/24DHOI5Ibj8",
-  43: "https://www.youtube.com/watch?v=xxxxxxx43",
+  43: "https://youtu.be/KkOf1PxXqRs",
   44: "https://www.youtube.com/watch?v=xxxxxxx44",
   45: "https://www.youtube.com/watch?v=xxxxxxx45",
   46: "https://www.youtube.com/watch?v=xxxxxxx46",
