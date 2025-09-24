@@ -3,13 +3,13 @@ dotenv.config();
 
 import express from 'express';
 const app = express();
-const PORT = 8000;
+const PORT = process.env.PORT || 8000;
 app.get('/', (req, res) => res.send('Bot is alive!'));
 app.listen(PORT, () => {
   console.log(`Dummy web server running on port ${PORT}`);
 });
 
-import { Client, GatewayIntentBits, Collection, PermissionFlagsBits } from 'discord.js';
+import { Client, GatewayIntentBits, Collection, PermissionFlagsBits, AttachmentBuilder } from 'discord.js';
 import mongoose from 'mongoose';
 
 import YoutubeVideo from './models/YoutubeVideo.js';
@@ -99,6 +99,17 @@ const commands = [
   }
 ];
 
+// 文字数制限対策: 長文出力はファイル送信
+async function replyWithPossibleFile(interaction, replyMsg, filename = 'result.txt') {
+  if (replyMsg.length > 1900) {
+    const buffer = Buffer.from(replyMsg, 'utf-8');
+    const file = new AttachmentBuilder(buffer, { name: filename });
+    await interaction.editReply({ content: '出力が多いためファイルで送信します。', files: [file] });
+  } else {
+    await interaction.editReply(replyMsg);
+  }
+}
+
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand()) return;
   const { commandName } = interaction;
@@ -139,7 +150,8 @@ client.on('interactionCreate', async (interaction) => {
     Object.entries(userSales).forEach(([u, c]) => {
       replyMsg += `${u}: ${c}本\n`;
     });
-    return interaction.editReply(replyMsg || '登録ユーザーがいません');
+    await replyWithPossibleFile(interaction, replyMsg || '登録ユーザーがいません', 'sales.txt');
+    return;
   }
 
   // 売上リセット（ユーザー指定・管理者のみ）
@@ -200,7 +212,8 @@ client.on('interactionCreate', async (interaction) => {
     videos.forEach((v, idx) => {
       replyMsg += `${idx + 1}. ${v.url}${v.owner ? `（所有者: ${v.owner}）` : ''}\n`;
     });
-    return interaction.editReply(replyMsg);
+    await replyWithPossibleFile(interaction, replyMsg, 'videos.txt');
+    return;
   }
 
   // 割り当て一覧（管理者のみ）
@@ -220,7 +233,8 @@ client.on('interactionCreate', async (interaction) => {
       }
       replyMsg += '\n';
     }
-    await interaction.editReply(replyMsg);
+    await replyWithPossibleFile(interaction, replyMsg, 'assignments.txt');
+    return;
   }
 });
 
