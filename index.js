@@ -19,6 +19,7 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const TOKEN = process.env.TOKEN;
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',') : [];
+const TOTAL_SALES_RESET_IDS = process.env.TOTAL_SALES_RESET_IDS ? process.env.TOTAL_SALES_RESET_IDS.split(',') : []; // 累計売上リセット許可ID
 
 const client = new Client({ intents: [
   GatewayIntentBits.Guilds,
@@ -39,9 +40,10 @@ client.on('messageCreate', async (message) => {
     if (url) {
       let video = await YoutubeVideo.findOne({ url });
       if (!video) {
-        video = new YoutubeVideo({ url, count: 1 });
+        video = new YoutubeVideo({ url, count: 1, totalCount: 1 });
       } else {
         video.count += 1;
+        video.totalCount = (typeof video.totalCount === 'number' ? video.totalCount : 0) + 1;
       }
       await video.save();
       await message.reply(
@@ -70,6 +72,10 @@ const commands = [
     description: '売上ランキングを表示'
   },
   {
+    name: '累計売上',
+    description: '所有者ごとの累計売上ランキングをファイルで出力'
+  },
+  {
     name: '売上リセット',
     description: '指定ユーザーの売上をリセット（管理者のみ）',
     options: [
@@ -86,6 +92,11 @@ const commands = [
     name: '全売上リセット',
     description: '全動画の売上をリセット（管理者のみ）',
     default_member_permissions: PermissionFlagsBits.Administrator.toString()
+  },
+  {
+    name: '累計売上リセット',
+    description: '全動画の累計売上をリセット（特定ユーザーのみ）',
+    default_member_permissions: PermissionFlagsBits.Administrator.toString() // 管理者のみ、さらにIDで制御
   },
   {
     name: '動画一覧',
@@ -154,6 +165,24 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    // 累計売上ランキング（誰でも見れる・ファイル出力）
+    if (commandName === '累計売上') {
+      const videos = await YoutubeVideo.find({});
+      const userTotalSales = {};
+      videos.forEach(v => {
+        if (v.owner) {
+          if (!userTotalSales[v.owner]) userTotalSales[v.owner] = 0;
+          userTotalSales[v.owner] += typeof v.totalCount === 'number' ? v.totalCount : 0;
+        }
+      });
+      let replyMsg = '所有者ごとの累計動画販売数（累計販売数×８００万）:\n';
+      Object.entries(userTotalSales).forEach(([u, c]) => {
+        replyMsg += `${u}: ${c}本\n`;
+      });
+      await replyWithPossibleFile(interaction, replyMsg || '登録ユーザーがいません', 'total_sales.txt');
+      return;
+    }
+
     // 売上リセット（ユーザー指定・管理者のみ）
     if (commandName === '売上リセット') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
@@ -193,6 +222,19 @@ client.on('interactionCreate', async (interaction) => {
         await v.save();
       }
       return await interaction.editReply('全動画の売上をリセットしました。');
+    }
+
+    // 累計売上リセット（特定ユーザーのみ）
+    if (commandName === '累計売上リセット') {
+      if (!TOTAL_SALES_RESET_IDS.includes(interaction.user.id)) {
+        return await interaction.editReply('このコマンドは指定ユーザーのみ実行できます。');
+      }
+      const videos = await YoutubeVideo.find({});
+      for (const v of videos) {
+        v.totalCount = 0;
+        await v.save();
+      }
+      return await interaction.editReply('全動画の累計売上をリセットしました。');
     }
 
     // 動画一覧表示（管理者のみ）
