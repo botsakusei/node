@@ -13,6 +13,10 @@ const YoutubeVideoSchema = new mongoose.Schema({
   count: {
     type: Number,
     default: 0
+  },
+  totalCount: {        // ←★累計売上を追加
+    type: Number,
+    default: 0
   }
 });
 
