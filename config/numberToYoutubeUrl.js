@@ -57,8 +57,8 @@ const numberToYoutubeUrl = {
   56: "https://youtu.be/QmFwYGGz5BE",
   57: "https://youtu.be/QmFwYGGz5BE",
   58: "https://youtu.be/QmFwYGGz5BE",
-  59: "https://youtu.be/QmFwYGGz5BE",
-  60: "https://youtu.be/QmFwYGGz5BE"
+  59: "https://youtu.be/U4pcLL5-Nh4",
+  60: "https://youtu.be/JDx1GyczEyM"
 };
 
 export default numberToYoutubeUrl;
