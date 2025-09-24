@@ -69,7 +69,7 @@ const commands = [
   },
   {
     name: '売上',
-    description: '売上ランキングを表示'
+    description: '売上ランキングをファイルで出力'
   },
   {
     name: '累計売上',
@@ -100,25 +100,21 @@ const commands = [
   },
   {
     name: '動画一覧',
-    description: '登録されている動画URLの一覧を表示（管理者のみ）',
+    description: '登録されている動画URLの一覧をファイルで出力（管理者のみ）',
     default_member_permissions: PermissionFlagsBits.Administrator.toString()
   },
   {
     name: '割り当て一覧',
-    description: '現在の番号の動画割り当てと所有者一覧（管理者のみ）',
+    description: '現在の番号の動画割り当てと所有者一覧をファイルで出力（管理者のみ）',
     default_member_permissions: PermissionFlagsBits.Administrator.toString()
   }
 ];
 
 // 文字数制限対策: 長文出力はファイル送信
 async function replyWithPossibleFile(interaction, replyMsg, filename = 'result.txt') {
-  if (replyMsg.length > 1900) {
-    const buffer = Buffer.from(replyMsg, 'utf-8');
-    const file = new AttachmentBuilder(buffer, { name: filename });
-    await interaction.editReply({ content: '出力が多いためファイルで送信します。', files: [file] });
-  } else {
-    await interaction.editReply(replyMsg);
-  }
+  const buffer = Buffer.from(replyMsg, 'utf-8');
+  const file = new AttachmentBuilder(buffer, { name: filename });
+  await interaction.editReply({ content: 'ファイルで出力します。', files: [file] });
 }
 
 client.on('interactionCreate', async (interaction) => {
@@ -147,7 +143,7 @@ client.on('interactionCreate', async (interaction) => {
       return await interaction.editReply(`動画URL: ${url} の所有者を ${owner} に登録しました。`);
     }
 
-    // 売上ランキング（誰でも見れる）
+    // 売上ランキング（ファイル出力）
     if (commandName === '売上') {
       const videos = await YoutubeVideo.find({});
       const userSales = {};
@@ -165,7 +161,7 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 累計売上ランキング（誰でも見れる・ファイル出力）
+    // 累計売上ランキング（ファイル出力）
     if (commandName === '累計売上') {
       const videos = await YoutubeVideo.find({});
       const userTotalSales = {};
@@ -237,7 +233,7 @@ client.on('interactionCreate', async (interaction) => {
       return await interaction.editReply('全動画の累計売上をリセットしました。');
     }
 
-    // 動画一覧表示（管理者のみ）
+    // 動画一覧表示（管理者のみ・ファイル出力）
     if (commandName === '動画一覧') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         return await interaction.editReply('このコマンドは管理者のみ実行できます。');
@@ -254,7 +250,7 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 割り当て一覧（管理者のみ）
+    // 割り当て一覧（管理者のみ・ファイル出力）
     if (commandName === '割り当て一覧') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         return await interaction.editReply('このコマンドは管理者のみ実行できます。');
