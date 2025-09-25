@@ -19,15 +19,10 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const TOKEN = process.env.TOKEN;
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
 
-// 管理者ID・リセット権限ID（不要でも残しておく、管理者も自分のみ表示したい場合は空配列でもOK）
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',') : [];
 const TOTAL_SALES_RESET_IDS = process.env.TOTAL_SALES_RESET_IDS ? process.env.TOTAL_SALES_RESET_IDS.split(',') : [];
 
-// DiscordユーザーID→所有者名のマッピング（必ず埋めてください！）
 const userMap = {
-  // 'DiscordのユーザーID': '所有者名'
-  // 例:
-  //  '123456789012345678': 'rei',
   '1204420101529673752': 'くるみん',
   '985863366100803594': '帆立丸',
   '1051175275880259716': '鮫田さあめ',
@@ -96,7 +91,7 @@ const commands = [
   },
   {
     name: '累計売上',
-    description: '自分自身の累計売上出力'
+    description: '自分自身の累計売上'
   },
   {
     name: '動画シャッフル',
@@ -129,8 +124,7 @@ const commands = [
   }
 ];
 
-// 累計売上のダミーテーブル（必要であれば使う。DBではなく表示用に管理者が変更できるデータ）
-let customTotalSales = {}; // { owner1: 数値, owner2: 数値, ... }
+let customTotalSales = {};
 
 async function replyWithPossibleFile(interaction, replyMsg, filename = 'result.txt') {
   const buffer = Buffer.from(replyMsg, 'utf-8');
@@ -144,7 +138,6 @@ client.on('interactionCreate', async (interaction) => {
   try {
     await interaction.deferReply();
 
-    // 代理登録（管理者のみ）
     if (commandName === '代理登録') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         await interaction.editReply('このコマンドは管理者のみ実行できます。');
@@ -173,7 +166,6 @@ client.on('interactionCreate', async (interaction) => {
 
       // 特定ユーザーのみ全売上データ出力
       if (userId === '1365266032272605324') {
-        // 全所有者分集計
         const videos = await YoutubeVideo.find({});
         const userTotalSales = {};
         videos.forEach(v => {
@@ -182,7 +174,6 @@ client.on('interactionCreate', async (interaction) => {
             userTotalSales[v.owner] += typeof v.totalCount === 'number' ? v.totalCount : 0;
           }
         });
-        // customTotalSalesがあれば上書き
         for (const owner in customTotalSales) {
           userTotalSales[owner] = customTotalSales[owner];
         }
@@ -197,7 +188,6 @@ client.on('interactionCreate', async (interaction) => {
         });
         replyMsg += '--------------------\n';
         replyMsg += `合計本数: ${totalBooks}本\n合計報酬金額: ¥${totalReward.toLocaleString()}\n`;
-        // 長文はファイルで返す
         const buffer = Buffer.from(replyMsg, 'utf-8');
         const file = new AttachmentBuilder(buffer, { name: 'total_sales.txt' });
         await interaction.editReply({ content: '全売上データをファイルで出力します。', files: [file] });
@@ -223,7 +213,6 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 累計売上変更（管理者のみ、ユーザー名で直接設定）
     if (commandName === '累計売上変更') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         await interaction.editReply('このコマンドは管理者のみ実行できます。');
@@ -240,7 +229,6 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 動画シャッフル（管理者のみ）
     if (commandName === '動画シャッフル') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         await interaction.editReply('このコマンドは管理者だけが実行できます。');
@@ -255,7 +243,6 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 累計売上リセット（特定ユーザーのみ、customTotalSalesもリセット）
     if (commandName === '累計売上リセット') {
       if (!TOTAL_SALES_RESET_IDS.includes(interaction.user.id)) {
         await interaction.editReply('このコマンドは指定ユーザーのみ実行できます。');
@@ -271,7 +258,6 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 動画一覧表示（管理者のみ・ファイル出力）
     if (commandName === '動画一覧') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         await interaction.editReply('このコマンドは管理者のみ実行できます。');
@@ -290,7 +276,6 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 割り当て一覧（管理者のみ・ファイル出力）
     if (commandName === '割り当て一覧') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         await interaction.editReply('このコマンドは管理者のみ実行できます。');
