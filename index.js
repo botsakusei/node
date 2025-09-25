@@ -31,22 +31,21 @@ const userMap = {
   '1204420101529673752': 'くるみん',
   '985863366100803594': '帆立丸',
   '1051175275880259716': '鮫田さあめ',
-    '943525542030901249': '七瀬のん',
+  '943525542030901249': '七瀬のん',
   '774197905921015839': 'あいる',
   '1418491317855588352': 'おいも',
   '634002738014978071': '藤堂ロミ',
-    '1175820346465722519': '氷花れき',
+  '1175820346465722519': '氷花れき',
   '883685991766958080': '藤崎二郎',
   '425554535449231360': '蘇田チェリ男',
   '736946638479949949': 'くまりん',
   '987654321098765432': '砂井破亜',
   '111222333444555666': 'くろみつ',
   '569215653882363916': '猫谷なゆ',
-    '935889095404687400': 'あーす',
+  '935889095404687400': 'あーす',
   '354060625334239235': '佐々木さざんか',
   '712983286082699265': 'rapis',
   '1365266032272605324': 'rei',
-  
 };
 
 const client = new Client({ intents: [
@@ -97,7 +96,7 @@ const commands = [
   },
   {
     name: '累計売上',
-    description: '自分自身の累計売上を出力（他人のデータは見えません）'
+    description: '自分自身の累計売上出力'
   },
   {
     name: '動画シャッフル',
@@ -168,19 +167,51 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 累計売上（自分自身のみ出力）
+    // 累計売上（特定IDのみ全売上・それ以外は自分だけ）
     if (commandName === '累計売上') {
-      // DiscordユーザーIDから所有者名を取得
       const userId = interaction.user.id;
+
+      // 特定ユーザーのみ全売上データ出力
+      if (userId === '1365266032272605324') {
+        // 全所有者分集計
+        const videos = await YoutubeVideo.find({});
+        const userTotalSales = {};
+        videos.forEach(v => {
+          if (v.owner) {
+            if (!userTotalSales[v.owner]) userTotalSales[v.owner] = 0;
+            userTotalSales[v.owner] += typeof v.totalCount === 'number' ? v.totalCount : 0;
+          }
+        });
+        // customTotalSalesがあれば上書き
+        for (const owner in customTotalSales) {
+          userTotalSales[owner] = customTotalSales[owner];
+        }
+        let replyMsg = '所有者ごとの累計動画販売数（累計販売数×８００万）:\n';
+        let totalBooks = 0;
+        let totalReward = 0;
+        Object.entries(userTotalSales).forEach(([u, c]) => {
+          const reward = c * 8000000;
+          replyMsg += `${u}: ${c}本（報酬: ¥${reward.toLocaleString()})\n`;
+          totalBooks += c;
+          totalReward += reward;
+        });
+        replyMsg += '--------------------\n';
+        replyMsg += `合計本数: ${totalBooks}本\n合計報酬金額: ¥${totalReward.toLocaleString()}\n`;
+        // 長文はファイルで返す
+        const buffer = Buffer.from(replyMsg, 'utf-8');
+        const file = new AttachmentBuilder(buffer, { name: 'total_sales.txt' });
+        await interaction.editReply({ content: '全売上データをファイルで出力します。', files: [file] });
+        return;
+      }
+
+      // それ以外は自分のみ
       const ownerName = userMap[userId];
       if (!ownerName) {
         await interaction.editReply('あなたの所有者名が登録されていません。管理者にご連絡ください。');
         return;
       }
-      // customTotalSalesが優先（あればそれを使う）
       let count = customTotalSales[ownerName];
       if (typeof count !== 'number') {
-        // DBから取得
         const videos = await YoutubeVideo.find({ owner: ownerName });
         count = videos.reduce((sum, v) => sum + (v.totalCount || 0), 0);
       }
