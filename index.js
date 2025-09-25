@@ -105,6 +105,12 @@ const commands = [
 // 累計売上のダミーテーブル
 let customTotalSales = {}; // { owner1: 数値, owner2: 数値, ... }
 
+// Discord user ID to owner name mapping
+const userMap = {
+  // Add Discord user IDs and their corresponding owner names here
+  // Example: 'discordUserId': 'ownerName'
+};
+
 // 文字数制限対策: 長文出力はファイル送信
 async function replyWithPossibleFile(interaction, replyMsg, filename = 'result.txt') {
   const buffer = Buffer.from(replyMsg, 'utf-8');
@@ -143,6 +149,7 @@ client.on('interactionCreate', async (interaction) => {
 
     // 累計売上ランキング（ファイル出力） ※customTotalSales優先
     if (commandName === '累計売上') {
+      const isAdmin = ADMIN_IDS.includes(interaction.user.id);
       const videos = await YoutubeVideo.find({});
       const userTotalSales = {};
       videos.forEach(v => {
@@ -155,11 +162,30 @@ client.on('interactionCreate', async (interaction) => {
       for (const owner in customTotalSales) {
         userTotalSales[owner] = customTotalSales[owner];
       }
-      let replyMsg = '所有者ごとの累計動画販売数（累計販売数×８００万）:\n';
-      Object.entries(userTotalSales).forEach(([u, c]) => {
-        replyMsg += `${u}: ${c}本\n`;
-      });
-      await replyWithPossibleFile(interaction, replyMsg || '登録ユーザーがいません', 'total_sales.txt');
+
+      if (isAdmin) {
+        // 管理者の場合：従来通りの全ランキング表示
+        let replyMsg = '所有者ごとの累計動画販売数（累計販売数×８００万）:\n';
+        Object.entries(userTotalSales).forEach(([u, c]) => {
+          replyMsg += `${u}: ${c}本\n`;
+        });
+        await replyWithPossibleFile(interaction, replyMsg || '登録ユーザーがいません', 'total_sales.txt');
+      } else {
+        // 非管理者の場合：自分の売上データのみ表示
+        const userId = interaction.user.id;
+        const ownerName = userMap[userId];
+        
+        if (!ownerName) {
+          await interaction.editReply('あなたのユーザーIDが所有者名にマッピングされていません。管理者にお問い合わせください。');
+          return;
+        }
+        
+        const userSales = userTotalSales[ownerName] || 0;
+        const reward = userSales * 8000000;
+        const replyMsg = `${ownerName}: ${userSales}本（報酬: ¥${reward.toLocaleString()}）`;
+        
+        await interaction.editReply(replyMsg);
+      }
       return;
     }
 
