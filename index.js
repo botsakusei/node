@@ -18,8 +18,19 @@ import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
 const MONGODB_URI = process.env.MONGODB_URI;
 const TOKEN = process.env.TOKEN;
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
+
+// 管理者ID・リセット権限ID（不要でも残しておく、管理者も自分のみ表示したい場合は空配列でもOK）
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',') : [];
 const TOTAL_SALES_RESET_IDS = process.env.TOTAL_SALES_RESET_IDS ? process.env.TOTAL_SALES_RESET_IDS.split(',') : [];
+
+// DiscordユーザーID→所有者名のマッピング（必ず埋めてください！）
+const userMap = {
+  // 'DiscordのユーザーID': '所有者名'
+  // 例:
+  // '123456789012345678': 'rei',
+  // '987654321098765432': 'くるみん',
+  // ...他ユーザー
+};
 
 const client = new Client({ intents: [
   GatewayIntentBits.Guilds,
@@ -69,7 +80,7 @@ const commands = [
   },
   {
     name: '累計売上',
-    description: '所有者ごとの累計売上ランキングをファイルで出力'
+    description: '自分自身の累計売上を出力（他人のデータは見えません）'
   },
   {
     name: '動画シャッフル',
@@ -102,10 +113,9 @@ const commands = [
   }
 ];
 
-// 累計売上のダミーテーブル
+// 累計売上のダミーテーブル（必要であれば使う。DBではなく表示用に管理者が変更できるデータ）
 let customTotalSales = {}; // { owner1: 数値, owner2: 数値, ... }
 
-// 文字数制限対策: 長文出力はファイル送信
 async function replyWithPossibleFile(interaction, replyMsg, filename = 'result.txt') {
   const buffer = Buffer.from(replyMsg, 'utf-8');
   const file = new AttachmentBuilder(buffer, { name: filename });
@@ -141,25 +151,27 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 累計売上ランキング（ファイル出力） ※customTotalSales優先
+    // 累計売上（自分自身のみ出力）
     if (commandName === '累計売上') {
-      const videos = await YoutubeVideo.find({});
-      const userTotalSales = {};
-      videos.forEach(v => {
-        if (v.owner) {
-          if (!userTotalSales[v.owner]) userTotalSales[v.owner] = 0;
-          userTotalSales[v.owner] += typeof v.totalCount === 'number' ? v.totalCount : 0;
-        }
-      });
-      // customTotalSalesがあれば上書き
-      for (const owner in customTotalSales) {
-        userTotalSales[owner] = customTotalSales[owner];
+      // DiscordユーザーIDから所有者名を取得
+      const userId = interaction.user.id;
+      const ownerName = userMap[userId];
+      if (!ownerName) {
+        await interaction.editReply('あなたの所有者名が登録されていません。管理者にご連絡ください。');
+        return;
       }
-      let replyMsg = '所有者ごとの累計動画販売数（累計販売数×８００万）:\n';
-      Object.entries(userTotalSales).forEach(([u, c]) => {
-        replyMsg += `${u}: ${c}本\n`;
-      });
-      await replyWithPossibleFile(interaction, replyMsg || '登録ユーザーがいません', 'total_sales.txt');
+      // customTotalSalesが優先（あればそれを使う）
+      let count = customTotalSales[ownerName];
+      if (typeof count !== 'number') {
+        // DBから取得
+        const videos = await YoutubeVideo.find({ owner: ownerName });
+        count = videos.reduce((sum, v) => sum + (v.totalCount || 0), 0);
+      }
+      const reward = count * 8000000;
+      await interaction.editReply(
+        `所有者ごとの累計動画販売数（累計販売数×８００万）:\n` +
+        `${ownerName}: ${count}本（報酬: ¥${reward.toLocaleString()})`
+      );
       return;
     }
 
