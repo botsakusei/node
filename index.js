@@ -214,6 +214,7 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    // DBにも反映する累計売上変更
     if (commandName === '累計売上変更') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         await interaction.editReply('このコマンドは管理者のみ実行できます。');
@@ -225,8 +226,24 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply('売上数は0以上の整数で指定してください。');
         return;
       }
+      // customTotalSales にも反映
       customTotalSales[owner] = newCount;
-      await interaction.editReply(`所有者: ${owner} の累計売上で出力される数を${newCount}本に変更しました。（実DBの値は変更しません）`);
+
+      // DBの全動画(totalCount)にも反映
+      const videos = await YoutubeVideo.find({ owner });
+      if (videos.length === 0) {
+        await interaction.editReply(`所有者: ${owner} の動画が見つかりません。`);
+        return;
+      }
+      // 動画本数で均等分配（余りも割り振り）
+      const perVideoCount = Math.floor(newCount / videos.length);
+      let remainder = newCount % videos.length;
+      for (const v of videos) {
+        v.totalCount = perVideoCount + (remainder > 0 ? 1 : 0);
+        if (remainder > 0) remainder--;
+        await v.save();
+      }
+      await interaction.editReply(`所有者: ${owner} の累計売上（${newCount}本）をDBにも反映しました。`);
       return;
     }
 
