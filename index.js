@@ -23,6 +23,7 @@ const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',') : [];
 const TOTAL_SALES_RESET_IDS = process.env.TOTAL_SALES_RESET_IDS ? process.env.TOTAL_SALES_RESET_IDS.split(',') : [];
 
 const userMap = {
+  '636419692353028103': 'うつろみゆむ',
   '1204420101529673752': 'くるみん',
   '985863366100803594': '帆立丸',
   '1051175275880259716': '鮫田さあめ',
