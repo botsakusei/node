@@ -82,12 +82,40 @@ const coinNames = {
 
 const INTERVAL_MIN = 10;
 
-// 価格と24h変動率取得関数
+// axiosリトライ処理
+async function axiosGetWithRetry(url, retries = 3, delay = 2000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await axios.get(url);
+      return res;
+    } catch (err) {
+      if (i < retries - 1) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
+// 価格取得関数
+async function getCurrentPrices(coinIds = COINS, vsCurrency = 'usd') {
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds.join(',')}&vs_currencies=${vsCurrency}`;
+  try {
+    const res = await axiosGetWithRetry(url);
+    return res.data;
+  } catch (e) {
+    console.error('価格取得失敗:', e.message);
+    return {};
+  }
+}
+
+// 価格と24h変動率取得関数（既存方式）
 async function getCurrentPricesAndChange(coinIds = COINS, vsCurrency = 'usd') {
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds.join(',')}&vs_currencies=${vsCurrency}`;
   let prices = {};
   try {
-    const res = await axios.get(url);
+    const res = await axiosGetWithRetry(url);
     prices = res.data;
   } catch (e) {
     console.error('価格取得失敗:', e.message);
@@ -99,12 +127,16 @@ async function getCurrentPricesAndChange(coinIds = COINS, vsCurrency = 'usd') {
   for (const coinId of coinIds) {
     try {
       const chartUrl = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=${vsCurrency}&days=1`;
-      const chartRes = await axios.get(chartUrl);
+      const chartRes = await axiosGetWithRetry(chartUrl);
       const priceArray = chartRes.data.prices;
-      const before24h = priceArray[0][1];
-      const now = priceArray[priceArray.length - 1][1];
-      const change = ((now - before24h) / before24h) * 100;
-      changes[coinId] = change;
+      if (priceArray.length < 2) {
+        changes[coinId] = null;
+      } else {
+        const before24h = priceArray[0][1];
+        const now = priceArray[priceArray.length - 1][1];
+        const change = ((now - before24h) / before24h) * 100;
+        changes[coinId] = change;
+      }
     } catch (e) {
       changes[coinId] = null;
     }
@@ -116,7 +148,7 @@ async function getCurrentPricesAndChange(coinIds = COINS, vsCurrency = 'usd') {
 async function checkDrop(coinId, percent = 5) {
   try {
     const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=1`;
-    const res = await axios.get(url);
+    const res = await axiosGetWithRetry(url);
     const prices = res.data.prices.map(([t, p]) => p);
     const maxPrice = Math.max(...prices);
     const nowPrice = prices[prices.length - 1];
