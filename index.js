@@ -145,7 +145,7 @@ client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (message.channel.id !== TARGET_CHANNEL_ID) return;
   const num = parseInt(message.content, 10);
-  if (!isNaN(num) && num >= 1 && num <= 69) {
+  if (!isNaN(num) && num >= 1 && num <= 69) { // <<< ここを 69 に変更
     const url = numberToYoutubeUrl[num];
     if (url) {
       let video = await YoutubeVideo.findOne({ url });
@@ -405,7 +405,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
       let replyMsg = '現在の動画割り当て一覧:\n';
-      for (let num = 1; num <= 60; num++) {
+      for (let num = 1; num <= 69; num++) { // <<< ここを 69 に変更
         const url = numberToYoutubeUrl[num];
         if (!url) continue;
         const video = await YoutubeVideo.findOne({ url });
