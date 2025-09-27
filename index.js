@@ -9,25 +9,28 @@ app.listen(PORT, () => {
   console.log(`Dummy web server running on port ${PORT}`);
 });
 
-import { Client, GatewayIntentBits, Collection, PermissionFlagsBits, AttachmentBuilder } from 'discord.js';
+import {
+  Client,
+  GatewayIntentBits,
+  Collection,
+  PermissionFlagsBits,
+  AttachmentBuilder,
+  SlashCommandBuilder,
+  REST,
+  Routes
+} from 'discord.js';
 import mongoose from 'mongoose';
+import axios from 'axios';
 
 import YoutubeVideo from './models/YoutubeVideo.js';
 import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
-import axios from 'axios';
-
-// CoinGecko監視用
-const COINS = [
-  'binance-usd', 'polkadot', 'solana', 'bitcoin', 'binancecoin',
-  'litecoin', 'dogecoin', 'ripple', 'usd-coin', 'shiba-inu',
-  'ethereum', 'cardano', 'tether', 'bitcoin-cash'
-];
-const INTERVAL_MIN = 10; // 自動監視間隔（分）
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const TOKEN = process.env.TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID; // 追加
+const GUILD_ID = process.env.GUILD_ID;   // 追加
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
-const DROP_NOTIFY_CHANNEL_ID = process.env.DROP_NOTIFY_CHANNEL_ID || TARGET_CHANNEL_ID; // 急落通知チャンネル
+const DROP_NOTIFY_CHANNEL_ID = process.env.DROP_NOTIFY_CHANNEL_ID || TARGET_CHANNEL_ID;
 
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',') : [];
 const TOTAL_SALES_RESET_IDS = process.env.TOTAL_SALES_RESET_IDS ? process.env.TOTAL_SALES_RESET_IDS.split(',') : [];
@@ -54,36 +57,44 @@ const userMap = {
   '1365266032272605324': 'rei',
 };
 
-const client = new Client({ intents: [
-  GatewayIntentBits.Guilds,
-  GatewayIntentBits.GuildMessages,
-  GatewayIntentBits.MessageContent
-] });
+const COINS = [
+  'binance-usd', 'polkadot', 'solana', 'bitcoin', 'binancecoin',
+  'litecoin', 'dogecoin', 'ripple', 'usd-coin', 'shiba-inu',
+  'ethereum', 'cardano', 'tether', 'bitcoin-cash'
+];
 
-client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}`);
+const coinNames = {
+  'binance-usd': 'BUSD',
+  'polkadot': 'DOT',
+  'solana': 'SOL',
+  'bitcoin': 'BTC',
+  'binancecoin': 'BNB',
+  'litecoin': 'LTC',
+  'dogecoin': 'DOGE',
+  'ripple': 'XRP',
+  'usd-coin': 'USDC',
+  'shiba-inu': 'SHIB',
+  'ethereum': 'ETH',
+  'cardano': 'ADA',
+  'tether': 'USDT',
+  'bitcoin-cash': 'BCH'
+};
 
-  // ---- 自動急落監視通知 ----
-  setInterval(async () => {
-    let notifyMsg = '';
-    for (const coinId of COINS) {
-      const drop = await checkDrop(coinId, 5);
-      if (drop) {
-        notifyMsg += `🟠 **${coinId}** が24hで **${drop.dropRate}%急落**！\n（最高値: $${drop.maxPrice.toFixed(4)}→現在値: $${drop.nowPrice.toFixed(4)}）\n`;
-      }
-    }
-    if (notifyMsg) {
-      try {
-        const channel = await client.channels.fetch(DROP_NOTIFY_CHANNEL_ID);
-        channel.send('【自動監視通知】\n' + notifyMsg);
-      } catch (e) {
-        console.error('急落通知送信エラー:', e);
-      }
-    }
-  }, INTERVAL_MIN * 60 * 1000); // 10分ごと
-});
+const INTERVAL_MIN = 10;
 
-// CoinGecko急落チェック関数
+// 価格取得関数
+async function getCurrentPrices(coinIds = COINS, vsCurrency = 'usd') {
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds.join(',')}&vs_currencies=${vsCurrency}`;
+  try {
+    const res = await axios.get(url);
+    return res.data;
+  } catch (e) {
+    console.error('価格取得失敗:', e.message);
+    return {};
+  }
+}
+
+// 急落チェック関数
 async function checkDrop(coinId, percent = 5) {
   try {
     const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=1`;
@@ -101,7 +112,34 @@ async function checkDrop(coinId, percent = 5) {
   return null;
 }
 
-// ---- 既存メッセージ・コマンド部分 ----
+const client = new Client({ intents: [
+  GatewayIntentBits.Guilds,
+  GatewayIntentBits.GuildMessages,
+  GatewayIntentBits.MessageContent
+] });
+
+client.once('ready', () => {
+  console.log(`Logged in as ${client.user.tag}`);
+
+  setInterval(async () => {
+    let notifyMsg = '';
+    for (const coinId of COINS) {
+      const drop = await checkDrop(coinId, 5);
+      if (drop) {
+        notifyMsg += `🟠 **${coinNames[coinId] || coinId}** が24hで **${drop.dropRate}%急落**！\n（最高値: $${drop.maxPrice.toFixed(4)}→現在値: $${drop.nowPrice.toFixed(4)}）\n`;
+      }
+    }
+    if (notifyMsg) {
+      try {
+        const channel = await client.channels.fetch(DROP_NOTIFY_CHANNEL_ID);
+        channel.send('【自動監視通知】\n' + notifyMsg);
+      } catch (e) {
+        console.error('急落通知送信エラー:', e);
+      }
+    }
+  }, INTERVAL_MIN * 60 * 1000);
+});
+
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (message.channel.id !== TARGET_CHANNEL_ID) return;
@@ -129,49 +167,57 @@ client.on('messageCreate', async (message) => {
 
 client.commands = new Collection();
 const commands = [
-  {
-    name: '代理登録',
-    description: '動画URLの所有者を登録（管理者のみ）',
-    options: [
-      { type: 3, name: '動画url', description: '動画URL', required: true },
-      { type: 3, name: 'ユーザー名', description: '所有者名', required: true }
-    ],
-    default_member_permissions: PermissionFlagsBits.Administrator.toString()
-  },
-  {
-    name: '累計売上',
-    description: '自分自身の累計売上'
-  },
-  {
-    name: '動画シャッフル',
-    description: '番号と動画URLの割り当てをランダムシャッフル（管理者のみ）',
-    default_member_permissions: PermissionFlagsBits.Administrator.toString()
-  },
-  {
-    name: '累計売上リセット',
-    description: '全動画の累計売上をリセット（特定ユーザーのみ）',
-    default_member_permissions: PermissionFlagsBits.Administrator.toString()
-  },
-  {
-    name: '累計売上変更',
-    description: '累計売上で出力される数をユーザー名指定で変更（管理者のみ）',
-    options: [
-      { type: 3, name: 'ユーザー名', description: '所有者名', required: true },
-      { type: 4, name: '売上数', description: '新しい累計売上数', required: true }
-    ],
-    default_member_permissions: PermissionFlagsBits.Administrator.toString()
-  },
-  {
-    name: '動画一覧',
-    description: '登録されている動画URLの一覧をファイルで出力（管理者のみ）',
-    default_member_permissions: PermissionFlagsBits.Administrator.toString()
-  },
-  {
-    name: '割り当て一覧',
-    description: '現在の番号の動画割り当てと所有者一覧をファイルで出力（管理者のみ）',
-    default_member_permissions: PermissionFlagsBits.Administrator.toString()
+  new SlashCommandBuilder()
+    .setName('代理登録')
+    .setDescription('動画URLの所有者を登録（管理者のみ）')
+    .addStringOption(option => option.setName('動画url').setDescription('動画URL').setRequired(true))
+    .addStringOption(option => option.setName('ユーザー名').setDescription('所有者名').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder()
+    .setName('累計売上')
+    .setDescription('自分自身の累計売上'),
+  new SlashCommandBuilder()
+    .setName('動画シャッフル')
+    .setDescription('番号と動画URLの割り当てをランダムシャッフル（管理者のみ）')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder()
+    .setName('累計売上リセット')
+    .setDescription('全動画の累計売上をリセット（特定ユーザーのみ）')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder()
+    .setName('累計売上変更')
+    .setDescription('累計売上で出力される数をユーザー名指定で変更（管理者のみ）')
+    .addStringOption(option => option.setName('ユーザー名').setDescription('所有者名').setRequired(true))
+    .addIntegerOption(option => option.setName('売上数').setDescription('新しい累計売上数').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder()
+    .setName('動画一覧')
+    .setDescription('登録されている動画URLの一覧をファイルで出力（管理者のみ）')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder()
+    .setName('割り当て一覧')
+    .setDescription('現在の番号の動画割り当てと所有者一覧をファイルで出力（管理者のみ）')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  // 管理者専用コマンド: 価格確認
+  new SlashCommandBuilder()
+    .setName('pricecheck')
+    .setDescription('監視銘柄の現在価格を一覧表示（管理者のみ）')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+].map(cmd => cmd.toJSON());
+
+const rest = new REST({ version: '10' }).setToken(TOKEN);
+
+(async () => {
+  try {
+    await rest.put(
+      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+      { body: commands }
+    );
+    console.log('Slash commands registered!');
+  } catch (error) {
+    console.error(error);
   }
-];
+})();
 
 let customTotalSales = {};
 
@@ -186,6 +232,24 @@ client.on('interactionCreate', async (interaction) => {
   const { commandName } = interaction;
   try {
     await interaction.deferReply();
+
+    // 管理者専用 現在価格確認コマンド
+    if (commandName === 'pricecheck') {
+      if (!ADMIN_IDS.includes(interaction.user.id)) {
+        await interaction.editReply('このコマンドは管理者のみ実行できます。');
+        return;
+      }
+      // 価格取得
+      const prices = await getCurrentPrices(COINS, 'usd');
+      let replyMsg = '【監視銘柄 現在価格一覧（USD）】\n';
+      for (const coinId of COINS) {
+        const name = coinNames[coinId] || coinId;
+        const price = prices[coinId]?.usd;
+        replyMsg += `${name}: $${price ? price : '取得失敗'}\n`;
+      }
+      await interaction.editReply(replyMsg);
+      return;
+    }
 
     if (commandName === '代理登録') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
@@ -209,11 +273,9 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 累計売上（特定IDのみ全売上・それ以外は自分だけ）
     if (commandName === '累計売上') {
       const userId = interaction.user.id;
 
-      // 特定ユーザーのみ全売上データ出力
       if (userId === '1365266032272605324') {
         const videos = await YoutubeVideo.find({});
         const userTotalSales = {};
@@ -243,7 +305,6 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      // それ以外は自分のみ
       const ownerName = userMap[userId];
       if (!ownerName) {
         await interaction.editReply('あなたの所有者名が登録されていません。管理者にご連絡ください。');
@@ -262,7 +323,6 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // DBにも反映する累計売上変更
     if (commandName === '累計売上変更') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         await interaction.editReply('このコマンドは管理者のみ実行できます。');
@@ -274,16 +334,12 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply('売上数は0以上の整数で指定してください。');
         return;
       }
-      // customTotalSales にも反映
       customTotalSales[owner] = newCount;
-
-      // DBの全動画(totalCount)にも反映
       const videos = await YoutubeVideo.find({ owner });
       if (videos.length === 0) {
         await interaction.editReply(`所有者: ${owner} の動画が見つかりません。`);
         return;
       }
-      // 動画本数で均等分配（余りも割り振り）
       const perVideoCount = Math.floor(newCount / videos.length);
       let remainder = newCount % videos.length;
       for (const v of videos) {
@@ -371,13 +427,6 @@ client.on('interactionCreate', async (interaction) => {
       }
     } catch (_) {}
   }
-});
-
-client.on('ready', async () => {
-  const guild = client.guilds.cache.first();
-  if (!guild) return;
-  await guild.commands.set(commands);
-  console.log('Slash commands registered');
 });
 
 mongoose.connect(MONGODB_URI)
