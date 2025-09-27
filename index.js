@@ -14,10 +14,20 @@ import mongoose from 'mongoose';
 
 import YoutubeVideo from './models/YoutubeVideo.js';
 import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
+import axios from 'axios';
+
+// CoinGecko監視用
+const COINS = [
+  'binance-usd', 'polkadot', 'solana', 'bitcoin', 'binancecoin',
+  'litecoin', 'dogecoin', 'ripple', 'usd-coin', 'shiba-inu',
+  'ethereum', 'cardano', 'tether', 'bitcoin-cash'
+];
+const INTERVAL_MIN = 10; // 自動監視間隔（分）
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const TOKEN = process.env.TOKEN;
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
+const DROP_NOTIFY_CHANNEL_ID = process.env.DROP_NOTIFY_CHANNEL_ID || TARGET_CHANNEL_ID; // 急落通知チャンネル
 
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',') : [];
 const TOTAL_SALES_RESET_IDS = process.env.TOTAL_SALES_RESET_IDS ? process.env.TOTAL_SALES_RESET_IDS.split(',') : [];
@@ -52,8 +62,46 @@ const client = new Client({ intents: [
 
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
+
+  // ---- 自動急落監視通知 ----
+  setInterval(async () => {
+    let notifyMsg = '';
+    for (const coinId of COINS) {
+      const drop = await checkDrop(coinId, 5);
+      if (drop) {
+        notifyMsg += `🟠 **${coinId}** が24hで **${drop.dropRate}%急落**！\n（最高値: $${drop.maxPrice.toFixed(4)}→現在値: $${drop.nowPrice.toFixed(4)}）\n`;
+      }
+    }
+    if (notifyMsg) {
+      try {
+        const channel = await client.channels.fetch(DROP_NOTIFY_CHANNEL_ID);
+        channel.send('【自動監視通知】\n' + notifyMsg);
+      } catch (e) {
+        console.error('急落通知送信エラー:', e);
+      }
+    }
+  }, INTERVAL_MIN * 60 * 1000); // 10分ごと
 });
 
+// CoinGecko急落チェック関数
+async function checkDrop(coinId, percent = 5) {
+  try {
+    const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=1`;
+    const res = await axios.get(url);
+    const prices = res.data.prices.map(([t, p]) => p);
+    const maxPrice = Math.max(...prices);
+    const nowPrice = prices[prices.length - 1];
+    const dropRate = ((maxPrice - nowPrice) / maxPrice) * 100;
+    if (dropRate >= percent) {
+      return { coinId, dropRate: dropRate.toFixed(2), maxPrice, nowPrice };
+    }
+  } catch (e) {
+    console.error(`[${coinId}] API取得エラー:`, e.message);
+  }
+  return null;
+}
+
+// ---- 既存メッセージ・コマンド部分 ----
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (message.channel.id !== TARGET_CHANNEL_ID) return;
