@@ -48,7 +48,7 @@ const numberToYoutubeUrl = {
   47: "https://youtu.be/-yJEDSWMIyg",
   48: "https://youtu.be/APASAWUDfZU",
   49: "https://youtu.be/ispny5xJwNc",
-  50: "https://youtu.be/QmFwYGGz5BE",
+  50: "https://youtu.be/tqxUxgpy208",
   51: "https://youtu.be/QmFwYGGz5BE",
   52: "https://youtu.be/QmFwYGGz5BE",
   53: "https://youtu.be/QmFwYGGz5BE",
@@ -58,7 +58,16 @@ const numberToYoutubeUrl = {
   57: "https://youtu.be/QmFwYGGz5BE",
   58: "https://youtu.be/QmFwYGGz5BE",
   59: "https://youtu.be/U4pcLL5-Nh4",
-  60: "https://youtu.be/JDx1GyczEyM"
+  60: "https://youtu.be/JDx1GyczEyM",
+  61: "https://youtu.be/2ZkbUsZ6Uiw",
+  62: "https://youtu.be/yXfdXNjAwVQ",
+  63: "https://youtu.be/XtYRM6-_xuA",
+  64: "https://youtu.be/CsPSlM4RQmc",
+  65: "https://youtu.be/4DSvuVyI0NU",
+  66: "https://youtu.be/CWx9HzIMSAw",
+  67: "https://youtu.be/-Dq_fvcW1i0",
+  68: "https://youtu.be/AjKlBDm6MtQ",
+  69: "https://youtu.be/U4pcLL5-Nh4"
 };
 
 export default numberToYoutubeUrl;
