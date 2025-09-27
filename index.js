@@ -27,8 +27,8 @@ import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const TOKEN = process.env.TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID; // 追加
-const GUILD_ID = process.env.GUILD_ID;   // 追加
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
 const DROP_NOTIFY_CHANNEL_ID = process.env.DROP_NOTIFY_CHANNEL_ID || TARGET_CHANNEL_ID;
 
@@ -82,16 +82,34 @@ const coinNames = {
 
 const INTERVAL_MIN = 10;
 
-// 価格取得関数
-async function getCurrentPrices(coinIds = COINS, vsCurrency = 'usd') {
+// 価格と24h変動率取得関数
+async function getCurrentPricesAndChange(coinIds = COINS, vsCurrency = 'usd') {
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds.join(',')}&vs_currencies=${vsCurrency}`;
+  let prices = {};
   try {
     const res = await axios.get(url);
-    return res.data;
+    prices = res.data;
   } catch (e) {
     console.error('価格取得失敗:', e.message);
     return {};
   }
+
+  // 24h変動率も取得
+  const changes = {};
+  for (const coinId of coinIds) {
+    try {
+      const chartUrl = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=${vsCurrency}&days=1`;
+      const chartRes = await axios.get(chartUrl);
+      const priceArray = chartRes.data.prices;
+      const before24h = priceArray[0][1];
+      const now = priceArray[priceArray.length - 1][1];
+      const change = ((now - before24h) / before24h) * 100;
+      changes[coinId] = change;
+    } catch (e) {
+      changes[coinId] = null;
+    }
+  }
+  return { prices, changes };
 }
 
 // 急落チェック関数
@@ -201,7 +219,7 @@ const commands = [
   // 管理者専用コマンド: 価格確認
   new SlashCommandBuilder()
     .setName('pricecheck')
-    .setDescription('監視銘柄の現在価格を一覧表示（管理者のみ）')
+    .setDescription('監視銘柄の現在価格・24h変動率を一覧表示（管理者のみ）')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 ].map(cmd => cmd.toJSON());
 
@@ -233,19 +251,20 @@ client.on('interactionCreate', async (interaction) => {
   try {
     await interaction.deferReply();
 
-    // 管理者専用 現在価格確認コマンド
+    // 管理者専用 現在価格・変動率確認コマンド
     if (commandName === 'pricecheck') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         await interaction.editReply('このコマンドは管理者のみ実行できます。');
         return;
       }
-      // 価格取得
-      const prices = await getCurrentPrices(COINS, 'usd');
-      let replyMsg = '【監視銘柄 現在価格一覧（USD）】\n';
+      // 価格と変動率取得
+      const { prices, changes } = await getCurrentPricesAndChange(COINS, 'usd');
+      let replyMsg = '【監視銘柄 現在価格・24h変動率（USD）】\n';
       for (const coinId of COINS) {
         const name = coinNames[coinId] || coinId;
         const price = prices[coinId]?.usd;
-        replyMsg += `${name}: $${price ? price : '取得失敗'}\n`;
+        const change = changes[coinId];
+        replyMsg += `${name}: $${price ? price : '取得失敗'} (${change !== null ? change.toFixed(2) : '変動失敗'}%)\n`;
       }
       await interaction.editReply(replyMsg);
       return;
