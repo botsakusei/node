@@ -144,7 +144,7 @@ client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (message.channel.id !== TARGET_CHANNEL_ID) return;
   const num = parseInt(message.content, 10);
-  if (!isNaN(num) && num >= 1 && num <= 60) {
+  if (!isNaN(num) && num >= 1 && num <= 69) {
     const url = numberToYoutubeUrl[num];
     if (url) {
       let video = await YoutubeVideo.findOne({ url });
