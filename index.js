@@ -321,10 +321,6 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.reply({ content: `コインが足りません！（所持: ${userCoin.coin}枚）`, ephemeral: true });
         return;
       }
-      userCoin.coin -= count;
-      await userCoin.save();
-
-      await interaction.reply({ content: `${count}回分の結果をDMで送りました！`, ephemeral: true });
 
       // 自分の所有動画除外
       const myOwnerName = userMap[userId];
@@ -365,7 +361,17 @@ client.on('interactionCreate', async (interaction) => {
           await video.save();
         }
       }
-      await interaction.user.send(`🎰 ガチャ結果（${count}回）:\n` + results.join('\n'));
+
+      // DM送信成功時のみコイン消費
+      try {
+        await interaction.user.send(`🎰 ガチャ結果（${count}回）:\n` + results.join('\n'));
+        userCoin.coin -= count;
+        await userCoin.save();
+        await interaction.reply({ content: `${count}回分の結果をDMで送りました！`, ephemeral: true });
+      } catch (e) {
+        await interaction.reply({ content: `DMが送信できませんでした。サーバーからのDMを許可してください。`, ephemeral: true });
+        return;
+      }
       return;
     }
 
