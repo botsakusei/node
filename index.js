@@ -279,8 +279,6 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
   }
 })();
 
-let customTotalSales = {};
-
 async function replyWithPossibleFile(interaction, replyMsg, filename = 'result.txt') {
   const buffer = Buffer.from(replyMsg, 'utf-8');
   const file = new AttachmentBuilder(buffer, { name: filename });
@@ -377,51 +375,46 @@ client.on('interactionCreate', async (interaction) => {
 
     if (commandName === '累計売上') {
       const userId = interaction.user.id;
-
-      if (userId === '1365266032272605324') {
-        const videos = await YoutubeVideo.find({});
-        const userTotalSales = {};
-        videos.forEach(v => {
-          if (v.owner) {
-            if (!userTotalSales[v.owner]) userTotalSales[v.owner] = 0;
-            userTotalSales[v.owner] += typeof v.totalCount === 'number' ? v.totalCount : 0;
-          }
-        });
-        for (const owner in customTotalSales) {
-          userTotalSales[owner] = customTotalSales[owner];
-        }
-        let replyMsg = '所有者ごとの累計動画販売数（累計販売数×８００万）:\n';
-        let totalBooks = 0;
-        let totalReward = 0;
-        Object.entries(userTotalSales).forEach(([u, c]) => {
-          const reward = c * 8000000;
-          replyMsg += `${u}: ${c}本（報酬: ¥${reward.toLocaleString()})\n`;
-          totalBooks += c;
-          totalReward += reward;
-        });
-        replyMsg += '--------------------\n';
-        replyMsg += `合計本数: ${totalBooks}本\n合計報酬金額: ¥${totalReward.toLocaleString()}\n`;
-        const buffer = Buffer.from(replyMsg, 'utf-8');
-        const file = new AttachmentBuilder(buffer, { name: 'total_sales.txt' });
-        await interaction.editReply({ content: '全売上データをファイルで出力します。', files: [file] });
-        return;
-      }
-
       const ownerName = userMap[userId];
       if (!ownerName) {
         await interaction.editReply('あなたの所有者名が登録されていません。管理者にご連絡ください。');
         return;
       }
-      let count = customTotalSales[ownerName];
-      if (typeof count !== 'number') {
-        const videos = await YoutubeVideo.find({ owner: ownerName });
-        count = videos.reduce((sum, v) => sum + (v.totalCount || 0), 0);
-      }
+      // DBからリアルタイム集計
+      const videos = await YoutubeVideo.find({ owner: ownerName });
+      const count = videos.reduce((sum, v) => sum + (v.totalCount || 0), 0);
       const reward = count * 8000000;
       await interaction.editReply(
         `所有者ごとの累計動画販売数（累計販売数×８００万）:\n` +
         `${ownerName}: ${count}本（報酬: ¥${reward.toLocaleString()})`
       );
+      return;
+    }
+
+    // 管理者用総合集計
+    if (commandName === '累計売上' && interaction.user.id === '1365266032272605324') {
+      const videos = await YoutubeVideo.find({});
+      const userTotalSales = {};
+      videos.forEach(v => {
+        if (v.owner) {
+          if (!userTotalSales[v.owner]) userTotalSales[v.owner] = 0;
+          userTotalSales[v.owner] += typeof v.totalCount === 'number' ? v.totalCount : 0;
+        }
+      });
+      let replyMsg = '所有者ごとの累計動画販売数（累計販売数×８００万）:\n';
+      let totalBooks = 0;
+      let totalReward = 0;
+      Object.entries(userTotalSales).forEach(([u, c]) => {
+        const reward = c * 8000000;
+        replyMsg += `${u}: ${c}本（報酬: ¥${reward.toLocaleString()})\n`;
+        totalBooks += c;
+        totalReward += reward;
+      });
+      replyMsg += '--------------------\n';
+      replyMsg += `合計本数: ${totalBooks}本\n合計報酬金額: ¥${totalReward.toLocaleString()}\n`;
+      const buffer = Buffer.from(replyMsg, 'utf-8');
+      const file = new AttachmentBuilder(buffer, { name: 'total_sales.txt' });
+      await interaction.editReply({ content: '全売上データをファイルで出力します。', files: [file] });
       return;
     }
 
@@ -436,7 +429,6 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply('売上数は0以上の整数で指定してください。');
         return;
       }
-      customTotalSales[owner] = newCount;
       const videos = await YoutubeVideo.find({ owner });
       if (videos.length === 0) {
         await interaction.editReply(`所有者: ${owner} の動画が見つかりません。`);
@@ -477,7 +469,6 @@ client.on('interactionCreate', async (interaction) => {
         v.totalCount = 0;
         await v.save();
       }
-      customTotalSales = {};
       await interaction.editReply('全動画の累計売上をリセットしました。');
       return;
     }
