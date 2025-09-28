@@ -199,7 +199,7 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // 既存の番号ガチャシステム
+  // 既存の番号ガチャシステム（動画追加＆売上反映）
   if (message.channel.id === TARGET_CHANNEL_ID) {
     const num = parseInt(message.content, 10);
     if (!isNaN(num) && num >= 1 && num <= 69) {
@@ -283,19 +283,16 @@ async function replyWithPossibleFile(interaction, replyMsg, filename = 'result.t
   await interaction.editReply({ content: 'ファイルで出力します。', files: [file] });
 }
 
-// --- DiscordAPIError[10062]対策: 必ず即座にreply/deferReplyを呼ぶ ---
 client.on('interactionCreate', async (interaction) => {
   try {
     // 所有者セレクトメニュー選択
     if (interaction.isStringSelectMenu() && interaction.customId === 'owner_select') {
       userOwnerSelection[interaction.user.id] = interaction.values[0];
-      // 即座にreplyすることで「Unknown interaction」を防ぐ
       await interaction.reply({ content: `確定枠: ${interaction.values[0]}を選択しました`, ephemeral: true });
       return;
     }
 
     if (interaction.isButton()) {
-      // ボタン押下ガチャ
       const userId = interaction.user.id;
       let userCoin = await UserCoin.findOne({ userId });
       if (!userCoin) userCoin = new UserCoin({ userId, coin: 0 });
@@ -310,7 +307,6 @@ client.on('interactionCreate', async (interaction) => {
 
       let results = [];
       if (count === 11 && userOwnerSelection[userId]) {
-        // 指定所有者の動画から1つ確定
         const owner = userOwnerSelection[userId];
         const ownerVideos = await YoutubeVideo.find({ owner });
         if (ownerVideos.length > 0) {
@@ -320,7 +316,6 @@ client.on('interactionCreate', async (interaction) => {
           results.push(`【確定枠】${owner}: 所有者動画が見つかりません`);
         }
       }
-      // 残り枠はランダム
       for (let i = results.length; i < count; i++) {
         const num = Math.floor(Math.random() * 69) + 1;
         results.push(`番号${num}: ${numberToYoutubeUrl[num]}`);
@@ -333,7 +328,6 @@ client.on('interactionCreate', async (interaction) => {
 
     if (!interaction.isCommand()) return;
 
-    // コマンドはdeferReplyで即応答
     await interaction.deferReply();
 
     const { commandName } = interaction;
@@ -367,7 +361,7 @@ client.on('interactionCreate', async (interaction) => {
       }
       let video = await YoutubeVideo.findOne({ url });
       if (!video) {
-        video = new YoutubeVideo({ url, owner });
+        video = new YoutubeVideo({ url, owner, count: 0, totalCount: 0 }); // 初期化
       } else {
         video.owner = owner;
       }
@@ -382,7 +376,6 @@ client.on('interactionCreate', async (interaction) => {
       const isAdmin = ADMIN_IDS.includes(userId);
 
       if (isAdmin) {
-        // 管理者は全所有者分を一覧表示
         const videos = await YoutubeVideo.find({});
         const userTotalSales = {};
         videos.forEach(v => {
@@ -407,7 +400,6 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply({ content: '全売上データをファイルで出力します。', files: [file] });
         return;
       } else {
-        // 一般は自分だけ
         const ownerName = userMap[userId];
         if (!ownerName) {
           await interaction.editReply('あなたの所有者名が登録されていません。管理者にご連絡ください。');
@@ -528,7 +520,6 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// クラッシュ防止: 未処理例外を握りつぶす
 process.on('unhandledRejection', (err) => {
   console.error('Unhandled promise rejection:', err);
 });
