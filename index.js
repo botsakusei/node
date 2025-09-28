@@ -91,6 +91,9 @@ const INTERVAL_MIN = 10;
 const GACHA_GIF_URL = "https://3.bp.blogspot.com/-nCwQHBNVgkQ/W2QwH3KMGnI/AAAAAAABK4c/2P6EwT4c9wAlVjWbZKkA2A2iV1nR1lIvgCLcBGAs/s400/gacha_capsule_machine.gif";
 const userOwnerSelection = {};
 
+// テストモード状態（メモリ保持／Bot再起動時リセット）
+let isTestMode = false;
+
 // ---- 価格取得 ----
 async function getCurrentPrices(coinIds = COINS, vsCurrency = 'usd') {
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds.join(',')}&vs_currencies=${vsCurrency}`;
@@ -228,8 +231,8 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-client.commands = new Collection();
-const commands = [
+// コマンドの定義（pricecheckのみギルドコマンド、他はグローバルコマンド用にも流用可）
+const globalCommands = [
   new SlashCommandBuilder()
     .setName('コイン一覧')
     .setDescription('全ユーザーのコイン残高一覧（管理者専用）')
@@ -237,7 +240,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName('コイン削除')
     .setDescription('指定ユーザーのコインを削除（管理者専用）')
-    .addIntegerOption(option => option.setName('枚数').setDescription('削除枚数').setRequired(true)) // 必須を先頭
+    .addIntegerOption(option => option.setName('枚数').setDescription('削除枚数').setRequired(true))
     .addStringOption(option => option.setName('ユーザーid').setDescription('対象ユーザーID').setRequired(false))
     .addStringOption(option => option.setName('所有者名').setDescription('対象所有者名').setRequired(false))
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -273,18 +276,35 @@ const commands = [
     .setDescription('現在の番号の動画割り当てと所有者一覧をファイルで出力（管理者のみ）')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder()
+    .setName('テストモード')
+    .setDescription('売上DBに反映しないテストモードに切り替え（管理者のみ）')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder()
+    .setName('テストモード解除')
+    .setDescription('テストモード解除（管理者のみ）')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+];
+
+const guildCommands = [
+  new SlashCommandBuilder()
     .setName('pricecheck')
     .setDescription('監視銘柄の現在価格を一覧表示（管理者のみ）')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-].map(cmd => cmd.toJSON());
+];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 (async () => {
   try {
+    // グローバルコマンド
+    await rest.put(
+      Routes.applicationCommands(CLIENT_ID),
+      { body: globalCommands.map(cmd => cmd.toJSON()) }
+    );
+    // ギルドコマンド（pricecheckのみ）
     await rest.put(
       Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-      { body: commands }
+      { body: guildCommands.map(cmd => cmd.toJSON()) }
     );
     console.log('Slash commands registered!');
   } catch (error) {
@@ -305,6 +325,27 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isStringSelectMenu() && interaction.customId === 'owner_select') {
       userOwnerSelection[interaction.user.id] = interaction.values[0];
       await interaction.reply({ content: `確定枠: ${interaction.values[0]}を選択しました`, ephemeral: true });
+      return;
+    }
+
+    // テストモードON
+    if (interaction.isCommand() && interaction.commandName === 'テストモード') {
+      if (!ADMIN_IDS.includes(interaction.user.id)) {
+        await interaction.reply({ content: '管理者のみ実行できます。', ephemeral: true });
+        return;
+      }
+      isTestMode = true;
+      await interaction.reply({ content: 'テストモードON（売上DBに反映されません）', ephemeral: true });
+      return;
+    }
+    // テストモードOFF
+    if (interaction.isCommand() && interaction.commandName === 'テストモード解除') {
+      if (!ADMIN_IDS.includes(interaction.user.id)) {
+        await interaction.reply({ content: '管理者のみ実行できます。', ephemeral: true });
+        return;
+      }
+      isTestMode = false;
+      await interaction.reply({ content: 'テストモードOFF（売上DBに反映されます）', ephemeral: true });
       return;
     }
 
@@ -373,7 +414,10 @@ client.on('interactionCreate', async (interaction) => {
         }
       }
 
-      await Promise.all(allVideos.map(v => v.isModified() ? v.save() : Promise.resolve()));
+      // テストモードでなければ売上加算
+      if (!isTestMode) {
+        await Promise.all(allVideos.map(v => v.isModified() ? v.save() : Promise.resolve()));
+      }
 
       // DM送信成功時のみコイン消費
       try {
@@ -434,24 +478,6 @@ client.on('interactionCreate', async (interaction) => {
         userCoin.coin = Math.max(0, userCoin.coin - amount);
         await userCoin.save();
         await interaction.editReply(`ユーザーID:${targetUserId} のコインを${amount}枚削除しました。現在:${userCoin.coin}枚`);
-        return;
-      }
-
-      if (interaction.commandName === 'pricecheck') {
-        if (!ADMIN_IDS.includes(interaction.user.id)) {
-          await interaction.deferReply();
-          await interaction.editReply('このコマンドは管理者のみ実行できます。');
-          return;
-        }
-        await interaction.deferReply();
-        const prices = await getCurrentPrices(COINS, 'usd');
-        let replyMsg = '【監視銘柄 現在価格一覧（USD）】\n';
-        for (const coinId of COINS) {
-          const name = coinNames[coinId] || coinId;
-          const price = prices[coinId]?.usd;
-          replyMsg += `${name}: $${price ? price : '取得失敗'}\n`;
-        }
-        await interaction.editReply(replyMsg);
         return;
       }
 
@@ -623,6 +649,25 @@ client.on('interactionCreate', async (interaction) => {
           replyMsg += '\n';
         }
         await replyWithPossibleFile(interaction, replyMsg, 'assignments.txt');
+        return;
+      }
+
+      // ギルド限定: pricecheck
+      if (interaction.commandName === 'pricecheck') {
+        if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.deferReply();
+          await interaction.editReply('このコマンドは管理者のみ実行できます。');
+          return;
+        }
+        await interaction.deferReply();
+        const prices = await getCurrentPrices(COINS, 'usd');
+        let replyMsg = '【監視銘柄 現在価格一覧（USD）】\n';
+        for (const coinId of COINS) {
+          const name = coinNames[coinId] || coinId;
+          const price = prices[coinId]?.usd;
+          replyMsg += `${name}: $${price ? price : '取得失敗'}\n`;
+        }
+        await interaction.editReply(replyMsg);
         return;
       }
     }
