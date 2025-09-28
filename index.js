@@ -40,6 +40,7 @@ const DROP_NOTIFY_CHANNEL_ID = process.env.DROP_NOTIFY_CHANNEL_ID || TARGET_CHAN
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',') : [];
 const TOTAL_SALES_RESET_IDS = process.env.TOTAL_SALES_RESET_IDS ? process.env.TOTAL_SALES_RESET_IDS.split(',') : [];
 
+// reiを除外
 const userMap = {
   '636419692353028103': 'うつろみゆむ',
   '1204420101529673752': 'くるみん',
@@ -59,7 +60,7 @@ const userMap = {
   '935889095404687400': 'あーす',
   '354060625334239235': '佐々木さざんか',
   '712983286082699265': 'rapis',
-  '1365266032272605324': '外れ（お布施用）',
+  // '1365266032272605324': 'rei', // ← 削除
   '712278533279318146': '氷花しえる',
 };
 
@@ -151,6 +152,7 @@ client.once('ready', () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
+  // コイン給付: !givecoin @user 枚数
   if (message.content.startsWith('!givecoin') && ADMIN_IDS.includes(message.author.id)) {
     const match = message.content.match(/!givecoin <@!?(\d+)>\s+(\d+)/);
     if (!match) return message.reply('使い方：!givecoin @user 枚数');
@@ -172,11 +174,13 @@ client.on('messageCreate', async (message) => {
       await m.delete();
     }
 
-    // ボタン設置
-    const ownerOptions = Object.values(userMap).map(owner => ({
-      label: owner,
-      value: owner
-    }));
+    // reiを除外した所有者リスト
+    const ownerOptions = Object.values(userMap)
+      .filter(owner => owner !== 'rei')
+      .map(owner => ({
+        label: owner,
+        value: owner
+      }));
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId('owner_select')
       .setPlaceholder('11連確定枠の所有者を選択')
@@ -229,6 +233,17 @@ client.on('messageCreate', async (message) => {
 
 client.commands = new Collection();
 const commands = [
+  new SlashCommandBuilder()
+    .setName('コイン一覧')
+    .setDescription('全ユーザーのコイン残高一覧（管理者専用）')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder()
+    .setName('コイン削除')
+    .setDescription('指定ユーザーのコインを削除（管理者専用）')
+    .addStringOption(option => option.setName('ユーザーid').setDescription('対象ユーザーID').setRequired(false))
+    .addStringOption(option => option.setName('所有者名').setDescription('対象所有者名').setRequired(false))
+    .addIntegerOption(option => option.setName('枚数').setDescription('削除枚数').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder()
     .setName('代理登録')
     .setDescription('動画URLの所有者を登録（管理者のみ）')
@@ -309,10 +324,10 @@ client.on('interactionCreate', async (interaction) => {
       userCoin.coin -= count;
       await userCoin.save();
 
-      // まず reply（3秒以内に必ず呼ぶ！）
       await interaction.reply({ content: `${count}回分の結果をDMで送りました！`, ephemeral: true });
 
-      // ここからガチャ抽選と売上加算（11連の確定枠重複防止）
+      // 自分の所有動画除外
+      const myOwnerName = userMap[userId];
       let results = [];
       let excludeUrls = [];
       let confirmedUrl = null;
@@ -331,13 +346,14 @@ client.on('interactionCreate', async (interaction) => {
         }
       }
       for (let i = results.length; i < count; i++) {
-        // excludeUrlsに入っていない動画から抽選
+        // excludeUrls、自分owner動画を除外
         let candidates = [];
         for (let num = 1; num <= 69; num++) {
           const url = numberToYoutubeUrl[num];
-          if (url && !excludeUrls.includes(url)) {
-            candidates.push({num, url});
-          }
+          if (!url || excludeUrls.includes(url)) continue;
+          const video = await YoutubeVideo.findOne({ url });
+          if (video && video.owner === myOwnerName) continue; // 自分の動画は除外
+          candidates.push({num, url});
         }
         if (candidates.length === 0) break;
         const pick = candidates[Math.floor(Math.random() * candidates.length)];
@@ -355,6 +371,55 @@ client.on('interactionCreate', async (interaction) => {
 
     // コマンド（即deferReply）
     if (interaction.isCommand()) {
+      if (interaction.commandName === 'コイン一覧') {
+        if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.reply({ content: '管理者専用コマンドです。', ephemeral: true });
+          return;
+        }
+        await interaction.deferReply();
+        const allCoins = await UserCoin.find({});
+        if (allCoins.length === 0) {
+          await interaction.editReply('コインデータがありません。');
+          return;
+        }
+        let msg = '【全ユーザーコイン残高一覧】\n';
+        allCoins.forEach(u => {
+          msg += `ID: ${u.userId}, 枚数: ${u.coin}\n`;
+        });
+        const file = new AttachmentBuilder(Buffer.from(msg, 'utf-8'), { name: 'coin_list.txt' });
+        await interaction.editReply({ content: '全ユーザーのコイン残高一覧ファイルです。', files: [file] });
+        return;
+      }
+
+      if (interaction.commandName === 'コイン削除') {
+        if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.reply({ content: '管理者専用コマンドです。', ephemeral: true });
+          return;
+        }
+        await interaction.deferReply();
+        const userId = interaction.options.getString('ユーザーid');
+        const ownerName = interaction.options.getString('所有者名');
+        const amount = interaction.options.getInteger('枚数');
+        let targetUserId = userId;
+        if (!targetUserId && ownerName) {
+          // userMapからIDを逆引き
+          targetUserId = Object.keys(userMap).find(k => userMap[k] === ownerName);
+        }
+        if (!targetUserId) {
+          await interaction.editReply('ユーザーIDまたは所有者名のいずれかを正しく指定してください。');
+          return;
+        }
+        let userCoin = await UserCoin.findOne({ userId: targetUserId });
+        if (!userCoin) {
+          await interaction.editReply('指定ユーザーのコインデータが見つかりません。');
+          return;
+        }
+        userCoin.coin = Math.max(0, userCoin.coin - amount);
+        await userCoin.save();
+        await interaction.editReply(`ユーザーID:${targetUserId} のコインを${amount}枚削除しました。現在:${userCoin.coin}枚`);
+        return;
+      }
+
       await interaction.deferReply();
 
       const { commandName } = interaction;
@@ -397,7 +462,6 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      // 売上集計：管理者は全員分、一般は自分だけ
       if (commandName === '累計売上') {
         const userId = interaction.user.id;
         const isAdmin = ADMIN_IDS.includes(userId);
