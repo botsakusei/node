@@ -18,13 +18,18 @@ import {
   SlashCommandBuilder,
   REST,
   Routes,
-  EmbedBuilder
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
 } from 'discord.js';
 import mongoose from 'mongoose';
 import axios from 'axios';
 
 import YoutubeVideo from './models/YoutubeVideo.js';
 import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
+
+// コイン管理用モデル
+import UserCoin from './models/UserCoin.js'; // 別途 models/UserCoin.js を作成すること
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const TOKEN = process.env.TOKEN;
@@ -84,17 +89,8 @@ const coinNames = {
 
 const INTERVAL_MIN = 10;
 
-// 演出用フリー画像・音声URL
-const FREEMATERIAL = {
-  coin: "https://1.bp.blogspot.com/-R4M6kGf8IIA/V0e6Fq_V7zI/AAAAAAAA6KE/81gC4pJQnKMhNwi0uF8lC9KQw8HfY7H7gCLcB/s400/gacha_coin_nyuryoku.png",
-  gachaGif: "https://3.bp.blogspot.com/-nCwQHBNVgkQ/W2QwH3KMGnI/AAAAAAABK4c/2P6EwT4c9wAlVjWbZKkA2A2iV1nR1lIvgCLcBGAs/s400/gacha_capsule_machine.gif",
-  capsule: "https://1.bp.blogspot.com/-uH9rTgN9QxY/XN4U4UqKzSI/AAAAAAABUuA/3uXshQ3Gn4U1pUgkKC4X2F2f3xBG1kzVgCLcBGAs/s400/gacha_capsule_open.png",
-  rare: "https://4.bp.blogspot.com/-ur0A6KD7rU0/W8nJXvVwLXI/AAAAAAABQ9U/1zQcD8suzmUVl0l9MjS3eQqj6dVgJ9tgwCLcBGAs/s400/takarabako_open.png",
-  sound: [
-    "https://www.youtube.com/watch?v=0qQeV4bA0SU",
-    "https://www.youtube.com/watch?v=1rCj3XJ1qkY"
-  ]
-};
+// フリー素材GIF
+const GACHA_GIF_URL = "https://3.bp.blogspot.com/-nCwQHBNVgkQ/W2QwH3KMGnI/AAAAAAABK4c/2P6EwT4c9wAlVjWbZKkA2A2iV1nR1lIvgCLcBGAs/s400/gacha_capsule_machine.gif";
 
 // 価格取得関数
 async function getCurrentPrices(coinIds = COINS, vsCurrency = 'usd') {
@@ -159,67 +155,65 @@ client.once('ready', () => {
   }, INTERVAL_MIN * 60 * 1000);
 });
 
-// ガチャコマンド演出
+// 管理者用コイン給付コマンド
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
-  if (message.channel.id !== TARGET_CHANNEL_ID) return;
 
-  // ガチャ演出コマンド
-  if (message.content === "!gacha") {
-    // 1. コイン投入フェーズ
-    await message.reply({
-      content: "🪙 持っているコインを投入！",
-      files: [FREEMATERIAL.coin]
+  // コイン給付: !givecoin @user 枚数
+  if (message.content.startsWith('!givecoin') && ADMIN_IDS.includes(message.author.id)) {
+    const match = message.content.match(/!givecoin <@!?(\d+)>\s+(\d+)/);
+    if (!match) return message.reply('使い方：!givecoin @user 枚数');
+    const userId = match[1], coins = parseInt(match[2], 10);
+    let userCoin = await UserCoin.findOne({ userId });
+    if (!userCoin) userCoin = new UserCoin({ userId, coin: 0 });
+    userCoin.coin += coins;
+    await userCoin.save();
+    message.reply(`<@${userId}> に${coins}枚給付しました（現在: ${userCoin.coin}枚）`);
+    return;
+  }
+
+  // ガチャボタン設置（管理者のみ）
+  if (message.content === '!gachabutton' && ADMIN_IDS.includes(message.author.id)) {
+    const row = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('gacha_1')
+          .setLabel('1回引く')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('gacha_11')
+          .setLabel('11回引く')
+          .setStyle(ButtonStyle.Success)
+      );
+    await message.channel.send({
+      content: 'ガチャを引くボタンはこちら！',
+      files: [GACHA_GIF_URL],
+      components: [row]
     });
-    await sleep(1200);
-
-    // 2. ガチャガチャが回る
-    await message.reply({
-      content: "🎰 ガチャガチャが回転中…",
-      files: [FREEMATERIAL.gachaGif]
-    });
-    await sleep(1600);
-
-    // 3. カプセルが出る
-    await message.reply({
-      content: "🔵 カプセルが出た！",
-      files: [FREEMATERIAL.capsule]
-    });
-    await sleep(1200);
-
-    // 4. カプセルから画像が出現
-    await message.reply({
-      content: "✨ カプセルが開いた！中身は…！？",
-      files: [FREEMATERIAL.rare]
-    });
-    await sleep(1200);
-
-    // 5. 音声URL送信
-    await message.reply(
-      `🔉 ガチャ演出効果音: \n${FREEMATERIAL.sound[0]}\nピカーンSE: ${FREEMATERIAL.sound[1]}`
-    );
     return;
   }
 
   // 既存の番号ガチャシステム
-  const num = parseInt(message.content, 10);
-  if (!isNaN(num) && num >= 1 && num <= 69) {
-    const url = numberToYoutubeUrl[num];
-    if (url) {
-      let video = await YoutubeVideo.findOne({ url });
-      if (!video) {
-        video = new YoutubeVideo({ url, count: 1, totalCount: 1 });
+  if (message.channel.id === TARGET_CHANNEL_ID) {
+    const num = parseInt(message.content, 10);
+    if (!isNaN(num) && num >= 1 && num <= 69) {
+      const url = numberToYoutubeUrl[num];
+      if (url) {
+        let video = await YoutubeVideo.findOne({ url });
+        if (!video) {
+          video = new YoutubeVideo({ url, count: 1, totalCount: 1 });
+        } else {
+          video.count += 1;
+          video.totalCount = (typeof video.totalCount === 'number' ? video.totalCount : 0) + 1;
+        }
+        await video.save();
+        await message.reply(
+          `番号${num}の動画URL: ${url}\n` +
+          (video.owner ? `所有者: ${video.owner}` : '所有者未登録')
+        );
       } else {
-        video.count += 1;
-        video.totalCount = (typeof video.totalCount === 'number' ? video.totalCount : 0) + 1;
+        await message.reply(`番号${num}には動画URLがありません。`);
       }
-      await video.save();
-      await message.reply(
-        `番号${num}の動画URL: ${url}\n` +
-        (video.owner ? `所有者: ${video.owner}` : '所有者未登録')
-      );
-    } else {
-      await message.reply(`番号${num}には動画URLがありません。`);
     }
   }
 });
@@ -286,6 +280,34 @@ async function replyWithPossibleFile(interaction, replyMsg, filename = 'result.t
 }
 
 client.on('interactionCreate', async (interaction) => {
+  if (interaction.isButton()) {
+    // ボタン押下ガチャ
+    const userId = interaction.user.id;
+    let userCoin = await UserCoin.findOne({ userId });
+    if (!userCoin) userCoin = new UserCoin({ userId, coin: 0 });
+
+    const count = (interaction.customId === 'gacha_11') ? 11 : 1;
+    if (userCoin.coin < count) {
+      await interaction.reply({ content: `コインが足りません！（所持: ${userCoin.coin}枚）`, ephemeral: true });
+      return;
+    }
+
+    userCoin.coin -= count;
+    await userCoin.save();
+
+    // 抽選
+    let results = [];
+    for (let i = 0; i < count; i++) {
+      const num = Math.floor(Math.random() * 69) + 1;
+      results.push(`番号${num}: ${numberToYoutubeUrl[num]}`);
+    }
+
+    // ガチャGIFはボタン設置時に1回送信済なのでここでは送らない
+    await interaction.user.send(`🎰 ガチャ結果（${count}回）:\n` + results.join('\n'));
+    await interaction.reply({ content: `${count}回分の結果をDMで送りました！`, ephemeral: true });
+    return;
+  }
+
   if (!interaction.isCommand()) return;
   const { commandName } = interaction;
   try {
