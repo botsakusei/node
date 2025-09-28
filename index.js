@@ -207,21 +207,32 @@ const globalCommands = [
   new SlashCommandBuilder().setName('テストモード解除').setDescription('テストモード解除（管理者のみ）').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('ガチャ履歴').setDescription('自分が引いたことのある動画URL一覧（管理者は全員分ファイル）')
 ];
+
 const guildCommands = [
   new SlashCommandBuilder().setName('pricecheck').setDescription('監視銘柄の現在価格を一覧表示（管理者のみ）').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 ];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
+// ここでグローバルコマンドとギルドコマンドを分けて登録
 (async () => {
   try {
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: globalCommands.map(cmd => cmd.toJSON()) });
-    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: guildCommands.map(cmd => cmd.toJSON()) });
+    // グローバルコマンド（全サーバーで利用可）
+    await rest.put(
+      Routes.applicationCommands(CLIENT_ID),
+      { body: globalCommands.map(cmd => cmd.toJSON()) }
+    );
+    // ギルドコマンド（pricecheckのみ対象サーバー限定）
+    await rest.put(
+      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+      { body: guildCommands.map(cmd => cmd.toJSON()) }
+    );
     console.log('Slash commands registered!');
   } catch (error) {
     console.error(error);
   }
 })();
+
 
 function replyWithPossibleFile(interaction, replyMsg, filename = 'result.txt') {
   const buffer = Buffer.from(replyMsg, 'utf-8');
