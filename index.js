@@ -120,10 +120,6 @@ async function checkDrop(coinId, percent = 5) {
   return null;
 }
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 const client = new Client({ intents: [
   GatewayIntentBits.Guilds,
   GatewayIntentBits.GuildMessages,
@@ -155,6 +151,7 @@ client.once('ready', () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
+  // コイン給付: !givecoin @user 枚数
   if (message.content.startsWith('!givecoin') && ADMIN_IDS.includes(message.author.id)) {
     const match = message.content.match(/!givecoin <@!?(\d+)>\s+(\d+)/);
     if (!match) return message.reply('使い方：!givecoin @user 枚数');
@@ -167,8 +164,16 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // ガチャボタン＋セレクトメニュー設置（管理者のみ）
+  // ガチャボタン＋セレクトメニュー設置（管理者のみ、ボタン重複防止）
   if (message.content === '!gachabutton' && ADMIN_IDS.includes(message.author.id)) {
+    // 直近10件のBotメッセージを検索してガチャボタン設置メッセージを削除
+    const fetched = await message.channel.messages.fetch({ limit: 10 });
+    const botMsgs = fetched.filter(m => m.author.bot && m.content.includes('ガチャを引くボタン'));
+    for (const m of botMsgs.values()) {
+      await m.delete();
+    }
+
+    // ボタン設置
     const ownerOptions = Object.values(userMap).map(owner => ({
       label: owner,
       value: owner
