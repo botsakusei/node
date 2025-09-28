@@ -17,7 +17,8 @@ import {
   AttachmentBuilder,
   SlashCommandBuilder,
   REST,
-  Routes
+  Routes,
+  EmbedBuilder
 } from 'discord.js';
 import mongoose from 'mongoose';
 import axios from 'axios';
@@ -27,8 +28,8 @@ import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const TOKEN = process.env.TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID; // 追加
-const GUILD_ID = process.env.GUILD_ID;   // 追加
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
 const DROP_NOTIFY_CHANNEL_ID = process.env.DROP_NOTIFY_CHANNEL_ID || TARGET_CHANNEL_ID;
 
@@ -83,6 +84,18 @@ const coinNames = {
 
 const INTERVAL_MIN = 10;
 
+// 演出用フリー画像・音声URL
+const FREEMATERIAL = {
+  coin: "https://1.bp.blogspot.com/-R4M6kGf8IIA/V0e6Fq_V7zI/AAAAAAAA6KE/81gC4pJQnKMhNwi0uF8lC9KQw8HfY7H7gCLcB/s400/gacha_coin_nyuryoku.png",
+  gachaGif: "https://3.bp.blogspot.com/-nCwQHBNVgkQ/W2QwH3KMGnI/AAAAAAABK4c/2P6EwT4c9wAlVjWbZKkA2A2iV1nR1lIvgCLcBGAs/s400/gacha_capsule_machine.gif",
+  capsule: "https://1.bp.blogspot.com/-uH9rTgN9QxY/XN4U4UqKzSI/AAAAAAABUuA/3uXshQ3Gn4U1pUgkKC4X2F2f3xBG1kzVgCLcBGAs/s400/gacha_capsule_open.png",
+  rare: "https://4.bp.blogspot.com/-ur0A6KD7rU0/W8nJXvVwLXI/AAAAAAABQ9U/1zQcD8suzmUVl0l9MjS3eQqj6dVgJ9tgwCLcBGAs/s400/takarabako_open.png",
+  sound: [
+    "https://www.youtube.com/watch?v=0qQeV4bA0SU",
+    "https://www.youtube.com/watch?v=1rCj3XJ1qkY"
+  ]
+};
+
 // 価格取得関数
 async function getCurrentPrices(coinIds = COINS, vsCurrency = 'usd') {
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds.join(',')}&vs_currencies=${vsCurrency}`;
@@ -113,6 +126,11 @@ async function checkDrop(coinId, percent = 5) {
   return null;
 }
 
+// sleep関数
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 const client = new Client({ intents: [
   GatewayIntentBits.Guilds,
   GatewayIntentBits.GuildMessages,
@@ -141,11 +159,51 @@ client.once('ready', () => {
   }, INTERVAL_MIN * 60 * 1000);
 });
 
+// ガチャコマンド演出
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (message.channel.id !== TARGET_CHANNEL_ID) return;
+
+  // ガチャ演出コマンド
+  if (message.content === "!gacha") {
+    // 1. コイン投入フェーズ
+    await message.reply({
+      content: "🪙 持っているコインを投入！",
+      files: [FREEMATERIAL.coin]
+    });
+    await sleep(1200);
+
+    // 2. ガチャガチャが回る
+    await message.reply({
+      content: "🎰 ガチャガチャが回転中…",
+      files: [FREEMATERIAL.gachaGif]
+    });
+    await sleep(1600);
+
+    // 3. カプセルが出る
+    await message.reply({
+      content: "🔵 カプセルが出た！",
+      files: [FREEMATERIAL.capsule]
+    });
+    await sleep(1200);
+
+    // 4. カプセルから画像が出現
+    await message.reply({
+      content: "✨ カプセルが開いた！中身は…！？",
+      files: [FREEMATERIAL.rare]
+    });
+    await sleep(1200);
+
+    // 5. 音声URL送信
+    await message.reply(
+      `🔉 ガチャ演出効果音: \n${FREEMATERIAL.sound[0]}\nピカーンSE: ${FREEMATERIAL.sound[1]}`
+    );
+    return;
+  }
+
+  // 既存の番号ガチャシステム
   const num = parseInt(message.content, 10);
-  if (!isNaN(num) && num >= 1 && num <= 69) { // <<< ここを 69 に変更
+  if (!isNaN(num) && num >= 1 && num <= 69) {
     const url = numberToYoutubeUrl[num];
     if (url) {
       let video = await YoutubeVideo.findOne({ url });
@@ -199,7 +257,6 @@ const commands = [
     .setName('割り当て一覧')
     .setDescription('現在の番号の動画割り当てと所有者一覧をファイルで出力（管理者のみ）')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  // 管理者専用コマンド: 価格確認
   new SlashCommandBuilder()
     .setName('pricecheck')
     .setDescription('監視銘柄の現在価格を一覧表示（管理者のみ）')
@@ -234,13 +291,11 @@ client.on('interactionCreate', async (interaction) => {
   try {
     await interaction.deferReply();
 
-    // 管理者専用 現在価格確認コマンド
     if (commandName === 'pricecheck') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         await interaction.editReply('このコマンドは管理者のみ実行できます。');
         return;
       }
-      // 価格取得
       const prices = await getCurrentPrices(COINS, 'usd');
       let replyMsg = '【監視銘柄 現在価格一覧（USD）】\n';
       for (const coinId of COINS) {
@@ -405,7 +460,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
       let replyMsg = '現在の動画割り当て一覧:\n';
-      for (let num = 1; num <= 69; num++) { // <<< ここを 69 に変更
+      for (let num = 1; num <= 69; num++) {
         const url = numberToYoutubeUrl[num];
         if (!url) continue;
         const video = await YoutubeVideo.findOne({ url });
