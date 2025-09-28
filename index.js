@@ -92,7 +92,6 @@ const GACHA_GIF_URL = "https://3.bp.blogspot.com/-nCwQHBNVgkQ/W2QwH3KMGnI/AAAAAA
 // ユーザー毎の所有者選択（メモリ保存）
 const userOwnerSelection = {};
 
-// 価格取得関数
 async function getCurrentPrices(coinIds = COINS, vsCurrency = 'usd') {
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds.join(',')}&vs_currencies=${vsCurrency}`;
   try {
@@ -153,10 +152,10 @@ client.once('ready', () => {
   }, INTERVAL_MIN * 60 * 1000);
 });
 
+// コイン給付: !givecoin @user 枚数
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // コイン給付: !givecoin @user 枚数
   if (message.content.startsWith('!givecoin') && ADMIN_IDS.includes(message.author.id)) {
     const match = message.content.match(/!givecoin <@!?(\d+)>\s+(\d+)/);
     if (!match) return message.reply('使い方：!givecoin @user 枚数');
@@ -171,7 +170,6 @@ client.on('messageCreate', async (message) => {
 
   // ガチャボタン＋セレクトメニュー設置（管理者のみ）
   if (message.content === '!gachabutton' && ADMIN_IDS.includes(message.author.id)) {
-    // 所有者リスト
     const ownerOptions = Object.values(userMap).map(owner => ({
       label: owner,
       value: owner
@@ -285,55 +283,60 @@ async function replyWithPossibleFile(interaction, replyMsg, filename = 'result.t
   await interaction.editReply({ content: 'ファイルで出力します。', files: [file] });
 }
 
+// --- DiscordAPIError[10062]対策: 必ず即座にreply/deferReplyを呼ぶ ---
 client.on('interactionCreate', async (interaction) => {
-  // 所有者セレクトメニュー選択
-  if (interaction.isStringSelectMenu() && interaction.customId === 'owner_select') {
-    userOwnerSelection[interaction.user.id] = interaction.values[0];
-    await interaction.reply({ content: `確定枠: ${interaction.values[0]}を選択しました`, ephemeral: true });
-    return;
-  }
-
-  if (interaction.isButton()) {
-    // ボタン押下ガチャ
-    const userId = interaction.user.id;
-    let userCoin = await UserCoin.findOne({ userId });
-    if (!userCoin) userCoin = new UserCoin({ userId, coin: 0 });
-
-    const count = (interaction.customId === 'gacha_11') ? 11 : 1;
-    if (userCoin.coin < count) {
-      await interaction.reply({ content: `コインが足りません！（所持: ${userCoin.coin}枚）`, ephemeral: true });
+  try {
+    // 所有者セレクトメニュー選択
+    if (interaction.isStringSelectMenu() && interaction.customId === 'owner_select') {
+      userOwnerSelection[interaction.user.id] = interaction.values[0];
+      // 即座にreplyすることで「Unknown interaction」を防ぐ
+      await interaction.reply({ content: `確定枠: ${interaction.values[0]}を選択しました`, ephemeral: true });
       return;
     }
-    userCoin.coin -= count;
-    await userCoin.save();
 
-    let results = [];
-    if (count === 11 && userOwnerSelection[userId]) {
-      // 指定所有者の動画から1つ確定
-      const owner = userOwnerSelection[userId];
-      const ownerVideos = await YoutubeVideo.find({ owner });
-      if (ownerVideos.length > 0) {
-        const video = ownerVideos[Math.floor(Math.random() * ownerVideos.length)];
-        results.push(`【確定枠】${owner}: ${video.url}`);
-      } else {
-        results.push(`【確定枠】${owner}: 所有者動画が見つかりません`);
+    if (interaction.isButton()) {
+      // ボタン押下ガチャ
+      const userId = interaction.user.id;
+      let userCoin = await UserCoin.findOne({ userId });
+      if (!userCoin) userCoin = new UserCoin({ userId, coin: 0 });
+
+      const count = (interaction.customId === 'gacha_11') ? 11 : 1;
+      if (userCoin.coin < count) {
+        await interaction.reply({ content: `コインが足りません！（所持: ${userCoin.coin}枚）`, ephemeral: true });
+        return;
       }
-    }
-    // 残り枠はランダム
-    for (let i = results.length; i < count; i++) {
-      const num = Math.floor(Math.random() * 69) + 1;
-      results.push(`番号${num}: ${numberToYoutubeUrl[num]}`);
+      userCoin.coin -= count;
+      await userCoin.save();
+
+      let results = [];
+      if (count === 11 && userOwnerSelection[userId]) {
+        // 指定所有者の動画から1つ確定
+        const owner = userOwnerSelection[userId];
+        const ownerVideos = await YoutubeVideo.find({ owner });
+        if (ownerVideos.length > 0) {
+          const video = ownerVideos[Math.floor(Math.random() * ownerVideos.length)];
+          results.push(`【確定枠】${owner}: ${video.url}`);
+        } else {
+          results.push(`【確定枠】${owner}: 所有者動画が見つかりません`);
+        }
+      }
+      // 残り枠はランダム
+      for (let i = results.length; i < count; i++) {
+        const num = Math.floor(Math.random() * 69) + 1;
+        results.push(`番号${num}: ${numberToYoutubeUrl[num]}`);
+      }
+
+      await interaction.reply({ content: `${count}回分の結果をDMで送りました！`, ephemeral: true });
+      await interaction.user.send(`🎰 ガチャ結果（${count}回）:\n` + results.join('\n'));
+      return;
     }
 
-    await interaction.user.send(`🎰 ガチャ結果（${count}回）:\n` + results.join('\n'));
-    await interaction.reply({ content: `${count}回分の結果をDMで送りました！`, ephemeral: true });
-    return;
-  }
+    if (!interaction.isCommand()) return;
 
-  if (!interaction.isCommand()) return;
-  const { commandName } = interaction;
-  try {
+    // コマンドはdeferReplyで即応答
     await interaction.deferReply();
+
+    const { commandName } = interaction;
 
     if (commandName === 'pricecheck') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
@@ -523,6 +526,11 @@ client.on('interactionCreate', async (interaction) => {
       }
     } catch (_) {}
   }
+});
+
+// クラッシュ防止: 未処理例外を握りつぶす
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled promise rejection:', err);
 });
 
 mongoose.connect(MONGODB_URI)
