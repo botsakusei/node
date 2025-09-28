@@ -29,7 +29,9 @@ import axios from 'axios';
 import YoutubeVideo from './models/YoutubeVideo.js';
 import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
 import UserCoin from './models/UserCoin.js';
+import GachaConfirmedHistory from './models/GachaConfirmedHistory.js';
 
+// ---- 各種定数 ----
 const MONGODB_URI = process.env.MONGODB_URI;
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -40,7 +42,6 @@ const DROP_NOTIFY_CHANNEL_ID = process.env.DROP_NOTIFY_CHANNEL_ID || TARGET_CHAN
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',') : [];
 const TOTAL_SALES_RESET_IDS = process.env.TOTAL_SALES_RESET_IDS ? process.env.TOTAL_SALES_RESET_IDS.split(',') : [];
 
-// reiを除外
 const userMap = {
   '636419692353028103': 'うつろみゆむ',
   '1204420101529673752': 'くるみん',
@@ -60,7 +61,6 @@ const userMap = {
   '935889095404687400': 'あーす',
   '354060625334239235': '佐々木さざんか',
   '712983286082699265': 'rapis',
-  // '1365266032272605324': 'rei', // ← 削除
   '712278533279318146': '氷花しえる',
 };
 
@@ -89,10 +89,9 @@ const coinNames = {
 
 const INTERVAL_MIN = 10;
 const GACHA_GIF_URL = "https://3.bp.blogspot.com/-nCwQHBNVgkQ/W2QwH3KMGnI/AAAAAAABK4c/2P6EwT4c9wAlVjWbZKkA2A2iV1nR1lIvgCLcBGAs/s400/gacha_capsule_machine.gif";
-
-// ユーザー毎の所有者選択（メモリ保存）
 const userOwnerSelection = {};
 
+// ---- 価格取得 ----
 async function getCurrentPrices(coinIds = COINS, vsCurrency = 'usd') {
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds.join(',')}&vs_currencies=${vsCurrency}`;
   try {
@@ -121,6 +120,7 @@ async function checkDrop(coinId, percent = 5) {
   return null;
 }
 
+// ---- Discord Bot ----
 const client = new Client({ intents: [
   GatewayIntentBits.Guilds,
   GatewayIntentBits.GuildMessages,
@@ -167,16 +167,13 @@ client.on('messageCreate', async (message) => {
 
   // ガチャボタン＋セレクトメニュー設置（管理者のみ、ボタン重複防止）
   if (message.content === '!gachabutton' && ADMIN_IDS.includes(message.author.id)) {
-    // 直近10件のBotメッセージを検索してガチャボタン設置メッセージを削除
     const fetched = await message.channel.messages.fetch({ limit: 10 });
     const botMsgs = fetched.filter(m => m.author.bot && m.content.includes('ガチャを引くボタン'));
     for (const m of botMsgs.values()) {
       await m.delete();
     }
 
-    // reiを除外した所有者リスト
     const ownerOptions = Object.values(userMap)
-      .filter(owner => owner !== 'rei')
       .map(owner => ({
         label: owner,
         value: owner
@@ -206,7 +203,7 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // 既存の番号ガチャシステム（動画追加＆売上反映）
+  // 番号ガチャシステム
   if (message.channel.id === TARGET_CHANNEL_ID) {
     const num = parseInt(message.content, 10);
     if (!isNaN(num) && num >= 1 && num <= 69) {
@@ -295,22 +292,23 @@ const rest = new REST({ version: '10' }).setToken(TOKEN);
   }
 })();
 
-async function replyWithPossibleFile(interaction, replyMsg, filename = 'result.txt') {
+function replyWithPossibleFile(interaction, replyMsg, filename = 'result.txt') {
   const buffer = Buffer.from(replyMsg, 'utf-8');
   const file = new AttachmentBuilder(buffer, { name: filename });
-  await interaction.editReply({ content: 'ファイルで出力します。', files: [file] });
+  return interaction.editReply({ content: 'ファイルで出力します。', files: [file] });
 }
 
+// ---- interactionCreate ----
 client.on('interactionCreate', async (interaction) => {
   try {
-    // セレクトメニュー（即reply）
+    // セレクトメニュー
     if (interaction.isStringSelectMenu() && interaction.customId === 'owner_select') {
       userOwnerSelection[interaction.user.id] = interaction.values[0];
       await interaction.reply({ content: `確定枠: ${interaction.values[0]}を選択しました`, ephemeral: true });
       return;
     }
 
-    // ボタン（必ずreplyを最初に呼ぶ！）
+    // ガチャボタン
     if (interaction.isButton()) {
       const userId = interaction.user.id;
       let userCoin = await UserCoin.findOne({ userId });
@@ -322,45 +320,60 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      // 自分の所有動画除外
+      // 動画一覧一括取得
+      const allVideos = await YoutubeVideo.find({});
+      const urlToVideo = {};
+      allVideos.forEach(v => { urlToVideo[v.url] = v; });
+
       const myOwnerName = userMap[userId];
       let results = [];
       let excludeUrls = [];
       let confirmedUrl = null;
+
+      // 11連ガチャ確定枠
       if (count === 11 && userOwnerSelection[userId]) {
         const owner = userOwnerSelection[userId];
-        const ownerVideos = await YoutubeVideo.find({ owner });
-        if (ownerVideos.length > 0) {
-          const video = ownerVideos[Math.floor(Math.random() * ownerVideos.length)];
+        let history = await GachaConfirmedHistory.findOne({ userId, owner });
+        if (!history) {
+          history = new GachaConfirmedHistory({ userId, owner, urls: [] });
+        }
+        const ownerVideos = allVideos.filter(v => v.owner === owner);
+        const notUsedVideos = ownerVideos.filter(v => !history.urls.includes(v.url));
+        if (notUsedVideos.length > 0) {
+          const video = notUsedVideos[Math.floor(Math.random() * notUsedVideos.length)];
           confirmedUrl = video.url;
           results.push(`【確定枠】${owner}: ${confirmedUrl}`);
           video.totalCount = (typeof video.totalCount === 'number' ? video.totalCount : 0) + 1;
-          await video.save();
-          excludeUrls.push(confirmedUrl); // 確定枠を除外
+          excludeUrls.push(confirmedUrl);
+          history.urls.push(confirmedUrl);
+          await history.save();
         } else {
-          results.push(`【確定枠】${owner}: 所有者動画が見つかりません`);
+          results.push(`【確定枠】${owner}: 所有者動画が全て出現済みです。履歴をリセットします。`);
+          history.urls = [];
+          await history.save();
         }
       }
+
       for (let i = results.length; i < count; i++) {
-        // excludeUrls、自分owner動画を除外
-        let candidates = [];
+        const candidates = [];
         for (let num = 1; num <= 69; num++) {
           const url = numberToYoutubeUrl[num];
           if (!url || excludeUrls.includes(url)) continue;
-          const video = await YoutubeVideo.findOne({ url });
-          if (video && video.owner === myOwnerName) continue; // 自分の動画は除外
+          const video = urlToVideo[url];
+          if (video && video.owner === myOwnerName) continue;
           candidates.push({num, url});
         }
         if (candidates.length === 0) break;
         const pick = candidates[Math.floor(Math.random() * candidates.length)];
         results.push(`番号${pick.num}: ${pick.url}`);
         excludeUrls.push(pick.url);
-        let video = await YoutubeVideo.findOne({ url: pick.url });
+        const video = urlToVideo[pick.url];
         if (video) {
           video.totalCount = (typeof video.totalCount === 'number' ? video.totalCount : 0) + 1;
-          await video.save();
         }
       }
+
+      await Promise.all(allVideos.map(v => v.isModified() ? v.save() : Promise.resolve()));
 
       // DM送信成功時のみコイン消費
       try {
@@ -375,7 +388,7 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // コマンド（即deferReply）
+    // スラッシュコマンド
     if (interaction.isCommand()) {
       if (interaction.commandName === 'コイン一覧') {
         if (!ADMIN_IDS.includes(interaction.user.id)) {
@@ -392,8 +405,7 @@ client.on('interactionCreate', async (interaction) => {
         allCoins.forEach(u => {
           msg += `ID: ${u.userId}, 枚数: ${u.coin}\n`;
         });
-        const file = new AttachmentBuilder(Buffer.from(msg, 'utf-8'), { name: 'coin_list.txt' });
-        await interaction.editReply({ content: '全ユーザーのコイン残高一覧ファイルです。', files: [file] });
+        await replyWithPossibleFile(interaction, msg, 'coin_list.txt');
         return;
       }
 
@@ -408,7 +420,6 @@ client.on('interactionCreate', async (interaction) => {
         const amount = interaction.options.getInteger('枚数');
         let targetUserId = userId;
         if (!targetUserId && ownerName) {
-          // userMapからIDを逆引き
           targetUserId = Object.keys(userMap).find(k => userMap[k] === ownerName);
         }
         if (!targetUserId) {
@@ -426,15 +437,13 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      await interaction.deferReply();
-
-      const { commandName } = interaction;
-
-      if (commandName === 'pricecheck') {
+      if (interaction.commandName === 'pricecheck') {
         if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.deferReply();
           await interaction.editReply('このコマンドは管理者のみ実行できます。');
           return;
         }
+        await interaction.deferReply();
         const prices = await getCurrentPrices(COINS, 'usd');
         let replyMsg = '【監視銘柄 現在価格一覧（USD）】\n';
         for (const coinId of COINS) {
@@ -446,11 +455,13 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      if (commandName === '代理登録') {
+      if (interaction.commandName === '代理登録') {
         if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.deferReply();
           await interaction.editReply('このコマンドは管理者のみ実行できます。');
           return;
         }
+        await interaction.deferReply();
         const url = interaction.options.getString('動画url');
         const owner = interaction.options.getString('ユーザー名');
         if (!url) {
@@ -459,7 +470,7 @@ client.on('interactionCreate', async (interaction) => {
         }
         let video = await YoutubeVideo.findOne({ url });
         if (!video) {
-          video = new YoutubeVideo({ url, owner, count: 0, totalCount: 0 }); // 初期化
+          video = new YoutubeVideo({ url, owner, count: 0, totalCount: 0 });
         } else {
           video.owner = owner;
         }
@@ -468,7 +479,8 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      if (commandName === '累計売上') {
+      if (interaction.commandName === '累計売上') {
+        await interaction.deferReply();
         const userId = interaction.user.id;
         const isAdmin = ADMIN_IDS.includes(userId);
 
@@ -492,9 +504,7 @@ client.on('interactionCreate', async (interaction) => {
           });
           replyMsg += '--------------------\n';
           replyMsg += `合計本数: ${totalBooks}本\n合計報酬金額: ¥${totalReward.toLocaleString()}\n`;
-          const buffer = Buffer.from(replyMsg, 'utf-8');
-          const file = new AttachmentBuilder(buffer, { name: 'total_sales.txt' });
-          await interaction.editReply({ content: '全売上データをファイルで出力します。', files: [file] });
+          await replyWithPossibleFile(interaction, replyMsg, 'total_sales.txt');
           return;
         } else {
           const ownerName = userMap[userId];
@@ -513,11 +523,13 @@ client.on('interactionCreate', async (interaction) => {
         }
       }
 
-      if (commandName === '累計売上変更') {
+      if (interaction.commandName === '累計売上変更') {
         if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.deferReply();
           await interaction.editReply('このコマンドは管理者のみ実行できます。');
           return;
         }
+        await interaction.deferReply();
         const owner = interaction.options.getString('ユーザー名');
         const newCount = interaction.options.getInteger('売上数');
         if (typeof newCount !== 'number' || newCount < 0) {
@@ -540,11 +552,13 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      if (commandName === '動画シャッフル') {
+      if (interaction.commandName === '動画シャッフル') {
         if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.deferReply();
           await interaction.editReply('このコマンドは管理者だけが実行できます。');
           return;
         }
+        await interaction.deferReply();
         const urls = Object.values(numberToYoutubeUrl);
         const shuffled = urls.sort(() => Math.random() - 0.5);
         Object.keys(numberToYoutubeUrl).forEach((num, idx) => {
@@ -554,11 +568,13 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      if (commandName === '累計売上リセット') {
+      if (interaction.commandName === '累計売上リセット') {
         if (!TOTAL_SALES_RESET_IDS.includes(interaction.user.id)) {
+          await interaction.deferReply();
           await interaction.editReply('このコマンドは指定ユーザーのみ実行できます。');
           return;
         }
+        await interaction.deferReply();
         const videos = await YoutubeVideo.find({});
         for (const v of videos) {
           v.totalCount = 0;
@@ -568,11 +584,13 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      if (commandName === '動画一覧') {
+      if (interaction.commandName === '動画一覧') {
         if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.deferReply();
           await interaction.editReply('このコマンドは管理者のみ実行できます。');
           return;
         }
+        await interaction.deferReply();
         const videos = await YoutubeVideo.find({});
         if (videos.length === 0) {
           await interaction.editReply('登録されている動画はありません。');
@@ -586,11 +604,13 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      if (commandName === '割り当て一覧') {
+      if (interaction.commandName === '割り当て一覧') {
         if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.deferReply();
           await interaction.editReply('このコマンドは管理者のみ実行できます。');
           return;
         }
+        await interaction.deferReply();
         let replyMsg = '現在の動画割り当て一覧:\n';
         for (let num = 1; num <= 69; num++) {
           const url = numberToYoutubeUrl[num];
