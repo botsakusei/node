@@ -287,7 +287,6 @@ async function replyWithPossibleFile(interaction, replyMsg, filename = 'result.t
   await interaction.editReply({ content: 'ファイルで出力します。', files: [file] });
 }
 
-// --- DiscordAPIError[10062]対策: 必ず即座にreply/deferReplyを呼ぶ ---
 client.on('interactionCreate', async (interaction) => {
   try {
     // セレクトメニュー（即reply）
@@ -297,7 +296,7 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // ボタン（即reply＆売上反映）
+    // ボタン（必ずreplyを最初に呼ぶ！）
     if (interaction.isButton()) {
       const userId = interaction.user.id;
       let userCoin = await UserCoin.findOne({ userId });
@@ -311,8 +310,11 @@ client.on('interactionCreate', async (interaction) => {
       userCoin.coin -= count;
       await userCoin.save();
 
+      // まず reply（3秒以内に必ず呼ぶ！）
+      await interaction.reply({ content: `${count}回分の結果をDMで送りました！`, ephemeral: true });
+
+      // ここからガチャ抽選と売上加算
       let results = [];
-      // 売上DB反映
       if (count === 11 && userOwnerSelection[userId]) {
         const owner = userOwnerSelection[userId];
         const ownerVideos = await YoutubeVideo.find({ owner });
@@ -335,8 +337,6 @@ client.on('interactionCreate', async (interaction) => {
           await video.save();
         }
       }
-
-      await interaction.reply({ content: `${count}回分の結果をDMで送りました！`, ephemeral: true });
       await interaction.user.send(`🎰 ガチャ結果（${count}回）:\n` + results.join('\n'));
       return;
     }
