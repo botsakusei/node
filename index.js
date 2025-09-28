@@ -292,7 +292,7 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // ボタン（即reply）
+    // ボタン（即reply＆売上反映）
     if (interaction.isButton()) {
       const userId = interaction.user.id;
       let userCoin = await UserCoin.findOne({ userId });
@@ -307,19 +307,28 @@ client.on('interactionCreate', async (interaction) => {
       await userCoin.save();
 
       let results = [];
+      // 売上DB反映
       if (count === 11 && userOwnerSelection[userId]) {
         const owner = userOwnerSelection[userId];
         const ownerVideos = await YoutubeVideo.find({ owner });
         if (ownerVideos.length > 0) {
           const video = ownerVideos[Math.floor(Math.random() * ownerVideos.length)];
           results.push(`【確定枠】${owner}: ${video.url}`);
+          video.totalCount = (typeof video.totalCount === 'number' ? video.totalCount : 0) + 1;
+          await video.save();
         } else {
           results.push(`【確定枠】${owner}: 所有者動画が見つかりません`);
         }
       }
       for (let i = results.length; i < count; i++) {
         const num = Math.floor(Math.random() * 69) + 1;
-        results.push(`番号${num}: ${numberToYoutubeUrl[num]}`);
+        const url = numberToYoutubeUrl[num];
+        results.push(`番号${num}: ${url}`);
+        let video = await YoutubeVideo.findOne({ url });
+        if (video) {
+          video.totalCount = (typeof video.totalCount === 'number' ? video.totalCount : 0) + 1;
+          await video.save();
+        }
       }
 
       await interaction.reply({ content: `${count}回分の結果をDMで送りました！`, ephemeral: true });
