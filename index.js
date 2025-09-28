@@ -152,7 +152,6 @@ client.once('ready', () => {
   }, INTERVAL_MIN * 60 * 1000);
 });
 
-// コイン給付: !givecoin @user 枚数
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
@@ -283,15 +282,17 @@ async function replyWithPossibleFile(interaction, replyMsg, filename = 'result.t
   await interaction.editReply({ content: 'ファイルで出力します。', files: [file] });
 }
 
+// --- DiscordAPIError[10062]対策: 必ず即座にreply/deferReplyを呼ぶ ---
 client.on('interactionCreate', async (interaction) => {
   try {
-    // 所有者セレクトメニュー選択
+    // セレクトメニュー（即reply）
     if (interaction.isStringSelectMenu() && interaction.customId === 'owner_select') {
       userOwnerSelection[interaction.user.id] = interaction.values[0];
       await interaction.reply({ content: `確定枠: ${interaction.values[0]}を選択しました`, ephemeral: true });
       return;
     }
 
+    // ボタン（即reply）
     if (interaction.isButton()) {
       const userId = interaction.user.id;
       let userCoin = await UserCoin.findOne({ userId });
@@ -326,187 +327,188 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    if (!interaction.isCommand()) return;
+    // コマンド（即deferReply）
+    if (interaction.isCommand()) {
+      await interaction.deferReply();
 
-    await interaction.deferReply();
+      const { commandName } = interaction;
 
-    const { commandName } = interaction;
-
-    if (commandName === 'pricecheck') {
-      if (!ADMIN_IDS.includes(interaction.user.id)) {
-        await interaction.editReply('このコマンドは管理者のみ実行できます。');
-        return;
-      }
-      const prices = await getCurrentPrices(COINS, 'usd');
-      let replyMsg = '【監視銘柄 現在価格一覧（USD）】\n';
-      for (const coinId of COINS) {
-        const name = coinNames[coinId] || coinId;
-        const price = prices[coinId]?.usd;
-        replyMsg += `${name}: $${price ? price : '取得失敗'}\n`;
-      }
-      await interaction.editReply(replyMsg);
-      return;
-    }
-
-    if (commandName === '代理登録') {
-      if (!ADMIN_IDS.includes(interaction.user.id)) {
-        await interaction.editReply('このコマンドは管理者のみ実行できます。');
-        return;
-      }
-      const url = interaction.options.getString('動画url');
-      const owner = interaction.options.getString('ユーザー名');
-      if (!url) {
-        await interaction.editReply('動画URLが入力されていません。');
-        return;
-      }
-      let video = await YoutubeVideo.findOne({ url });
-      if (!video) {
-        video = new YoutubeVideo({ url, owner, count: 0, totalCount: 0 }); // 初期化
-      } else {
-        video.owner = owner;
-      }
-      await video.save();
-      await interaction.editReply(`動画URL: ${url} の所有者を ${owner} に登録しました。`);
-      return;
-    }
-
-    // 売上集計：管理者は全員分、一般は自分だけ
-    if (commandName === '累計売上') {
-      const userId = interaction.user.id;
-      const isAdmin = ADMIN_IDS.includes(userId);
-
-      if (isAdmin) {
-        const videos = await YoutubeVideo.find({});
-        const userTotalSales = {};
-        videos.forEach(v => {
-          if (v.owner) {
-            if (!userTotalSales[v.owner]) userTotalSales[v.owner] = 0;
-            userTotalSales[v.owner] += typeof v.totalCount === 'number' ? v.totalCount : 0;
-          }
-        });
-        let replyMsg = '所有者ごとの累計動画販売数（累計販売数×８００万）:\n';
-        let totalBooks = 0;
-        let totalReward = 0;
-        Object.entries(userTotalSales).forEach(([u, c]) => {
-          const reward = c * 8000000;
-          replyMsg += `${u}: ${c}本（報酬: ¥${reward.toLocaleString()})\n`;
-          totalBooks += c;
-          totalReward += reward;
-        });
-        replyMsg += '--------------------\n';
-        replyMsg += `合計本数: ${totalBooks}本\n合計報酬金額: ¥${totalReward.toLocaleString()}\n`;
-        const buffer = Buffer.from(replyMsg, 'utf-8');
-        const file = new AttachmentBuilder(buffer, { name: 'total_sales.txt' });
-        await interaction.editReply({ content: '全売上データをファイルで出力します。', files: [file] });
-        return;
-      } else {
-        const ownerName = userMap[userId];
-        if (!ownerName) {
-          await interaction.editReply('あなたの所有者名が登録されていません。管理者にご連絡ください。');
+      if (commandName === 'pricecheck') {
+        if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.editReply('このコマンドは管理者のみ実行できます。');
           return;
         }
-        const videos = await YoutubeVideo.find({ owner: ownerName });
-        const count = videos.reduce((sum, v) => sum + (v.totalCount || 0), 0);
-        const reward = count * 8000000;
-        await interaction.editReply(
-          `所有者ごとの累計動画販売数（累計販売数×８００万）:\n` +
-          `${ownerName}: ${count}本（報酬: ¥${reward.toLocaleString()})`
-        );
-        return;
-      }
-    }
-
-    if (commandName === '累計売上変更') {
-      if (!ADMIN_IDS.includes(interaction.user.id)) {
-        await interaction.editReply('このコマンドは管理者のみ実行できます。');
-        return;
-      }
-      const owner = interaction.options.getString('ユーザー名');
-      const newCount = interaction.options.getInteger('売上数');
-      if (typeof newCount !== 'number' || newCount < 0) {
-        await interaction.editReply('売上数は0以上の整数で指定してください。');
-        return;
-      }
-      const videos = await YoutubeVideo.find({ owner });
-      if (videos.length === 0) {
-        await interaction.editReply(`所有者: ${owner} の動画が見つかりません。`);
-        return;
-      }
-      const perVideoCount = Math.floor(newCount / videos.length);
-      let remainder = newCount % videos.length;
-      for (const v of videos) {
-        v.totalCount = perVideoCount + (remainder > 0 ? 1 : 0);
-        if (remainder > 0) remainder--;
-        await v.save();
-      }
-      await interaction.editReply(`所有者: ${owner} の累計売上（${newCount}本）をDBにも反映しました。`);
-      return;
-    }
-
-    if (commandName === '動画シャッフル') {
-      if (!ADMIN_IDS.includes(interaction.user.id)) {
-        await interaction.editReply('このコマンドは管理者だけが実行できます。');
-        return;
-      }
-      const urls = Object.values(numberToYoutubeUrl);
-      const shuffled = urls.sort(() => Math.random() - 0.5);
-      Object.keys(numberToYoutubeUrl).forEach((num, idx) => {
-        numberToYoutubeUrl[num] = shuffled[idx];
-      });
-      await interaction.editReply('番号と動画URLの割り当てをランダムにシャッフルしました。');
-      return;
-    }
-
-    if (commandName === '累計売上リセット') {
-      if (!TOTAL_SALES_RESET_IDS.includes(interaction.user.id)) {
-        await interaction.editReply('このコマンドは指定ユーザーのみ実行できます。');
-        return;
-      }
-      const videos = await YoutubeVideo.find({});
-      for (const v of videos) {
-        v.totalCount = 0;
-        await v.save();
-      }
-      await interaction.editReply('全動画の累計売上をリセットしました。');
-      return;
-    }
-
-    if (commandName === '動画一覧') {
-      if (!ADMIN_IDS.includes(interaction.user.id)) {
-        await interaction.editReply('このコマンドは管理者のみ実行できます。');
-        return;
-      }
-      const videos = await YoutubeVideo.find({});
-      if (videos.length === 0) {
-        await interaction.editReply('登録されている動画はありません。');
-        return;
-      }
-      let replyMsg = '登録されている動画URL一覧:\n';
-      videos.forEach((v, idx) => {
-        replyMsg += `${idx + 1}. ${v.url}${v.owner ? `（所有者: ${v.owner}）` : ''}\n`;
-      });
-      await replyWithPossibleFile(interaction, replyMsg, 'videos.txt');
-      return;
-    }
-
-    if (commandName === '割り当て一覧') {
-      if (!ADMIN_IDS.includes(interaction.user.id)) {
-        await interaction.editReply('このコマンドは管理者のみ実行できます。');
-        return;
-      }
-      let replyMsg = '現在の動画割り当て一覧:\n';
-      for (let num = 1; num <= 69; num++) {
-        const url = numberToYoutubeUrl[num];
-        if (!url) continue;
-        const video = await YoutubeVideo.findOne({ url });
-        replyMsg += `${num}: ${url}`;
-        if (video && video.owner) {
-          replyMsg += `（所有者: ${video.owner}）`;
+        const prices = await getCurrentPrices(COINS, 'usd');
+        let replyMsg = '【監視銘柄 現在価格一覧（USD）】\n';
+        for (const coinId of COINS) {
+          const name = coinNames[coinId] || coinId;
+          const price = prices[coinId]?.usd;
+          replyMsg += `${name}: $${price ? price : '取得失敗'}\n`;
         }
-        replyMsg += '\n';
+        await interaction.editReply(replyMsg);
+        return;
       }
-      await replyWithPossibleFile(interaction, replyMsg, 'assignments.txt');
-      return;
+
+      if (commandName === '代理登録') {
+        if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.editReply('このコマンドは管理者のみ実行できます。');
+          return;
+        }
+        const url = interaction.options.getString('動画url');
+        const owner = interaction.options.getString('ユーザー名');
+        if (!url) {
+          await interaction.editReply('動画URLが入力されていません。');
+          return;
+        }
+        let video = await YoutubeVideo.findOne({ url });
+        if (!video) {
+          video = new YoutubeVideo({ url, owner, count: 0, totalCount: 0 }); // 初期化
+        } else {
+          video.owner = owner;
+        }
+        await video.save();
+        await interaction.editReply(`動画URL: ${url} の所有者を ${owner} に登録しました。`);
+        return;
+      }
+
+      // 売上集計：管理者は全員分、一般は自分だけ
+      if (commandName === '累計売上') {
+        const userId = interaction.user.id;
+        const isAdmin = ADMIN_IDS.includes(userId);
+
+        if (isAdmin) {
+          const videos = await YoutubeVideo.find({});
+          const userTotalSales = {};
+          videos.forEach(v => {
+            if (v.owner) {
+              if (!userTotalSales[v.owner]) userTotalSales[v.owner] = 0;
+              userTotalSales[v.owner] += typeof v.totalCount === 'number' ? v.totalCount : 0;
+            }
+          });
+          let replyMsg = '所有者ごとの累計動画販売数（累計販売数×８００万）:\n';
+          let totalBooks = 0;
+          let totalReward = 0;
+          Object.entries(userTotalSales).forEach(([u, c]) => {
+            const reward = c * 8000000;
+            replyMsg += `${u}: ${c}本（報酬: ¥${reward.toLocaleString()})\n`;
+            totalBooks += c;
+            totalReward += reward;
+          });
+          replyMsg += '--------------------\n';
+          replyMsg += `合計本数: ${totalBooks}本\n合計報酬金額: ¥${totalReward.toLocaleString()}\n`;
+          const buffer = Buffer.from(replyMsg, 'utf-8');
+          const file = new AttachmentBuilder(buffer, { name: 'total_sales.txt' });
+          await interaction.editReply({ content: '全売上データをファイルで出力します。', files: [file] });
+          return;
+        } else {
+          const ownerName = userMap[userId];
+          if (!ownerName) {
+            await interaction.editReply('あなたの所有者名が登録されていません。管理者にご連絡ください。');
+            return;
+          }
+          const videos = await YoutubeVideo.find({ owner: ownerName });
+          const count = videos.reduce((sum, v) => sum + (v.totalCount || 0), 0);
+          const reward = count * 8000000;
+          await interaction.editReply(
+            `所有者ごとの累計動画販売数（累計販売数×８００万）:\n` +
+            `${ownerName}: ${count}本（報酬: ¥${reward.toLocaleString()})`
+          );
+          return;
+        }
+      }
+
+      if (commandName === '累計売上変更') {
+        if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.editReply('このコマンドは管理者のみ実行できます。');
+          return;
+        }
+        const owner = interaction.options.getString('ユーザー名');
+        const newCount = interaction.options.getInteger('売上数');
+        if (typeof newCount !== 'number' || newCount < 0) {
+          await interaction.editReply('売上数は0以上の整数で指定してください。');
+          return;
+        }
+        const videos = await YoutubeVideo.find({ owner });
+        if (videos.length === 0) {
+          await interaction.editReply(`所有者: ${owner} の動画が見つかりません。`);
+          return;
+        }
+        const perVideoCount = Math.floor(newCount / videos.length);
+        let remainder = newCount % videos.length;
+        for (const v of videos) {
+          v.totalCount = perVideoCount + (remainder > 0 ? 1 : 0);
+          if (remainder > 0) remainder--;
+          await v.save();
+        }
+        await interaction.editReply(`所有者: ${owner} の累計売上（${newCount}本）をDBにも反映しました。`);
+        return;
+      }
+
+      if (commandName === '動画シャッフル') {
+        if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.editReply('このコマンドは管理者だけが実行できます。');
+          return;
+        }
+        const urls = Object.values(numberToYoutubeUrl);
+        const shuffled = urls.sort(() => Math.random() - 0.5);
+        Object.keys(numberToYoutubeUrl).forEach((num, idx) => {
+          numberToYoutubeUrl[num] = shuffled[idx];
+        });
+        await interaction.editReply('番号と動画URLの割り当てをランダムにシャッフルしました。');
+        return;
+      }
+
+      if (commandName === '累計売上リセット') {
+        if (!TOTAL_SALES_RESET_IDS.includes(interaction.user.id)) {
+          await interaction.editReply('このコマンドは指定ユーザーのみ実行できます。');
+          return;
+        }
+        const videos = await YoutubeVideo.find({});
+        for (const v of videos) {
+          v.totalCount = 0;
+          await v.save();
+        }
+        await interaction.editReply('全動画の累計売上をリセットしました。');
+        return;
+      }
+
+      if (commandName === '動画一覧') {
+        if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.editReply('このコマンドは管理者のみ実行できます。');
+          return;
+        }
+        const videos = await YoutubeVideo.find({});
+        if (videos.length === 0) {
+          await interaction.editReply('登録されている動画はありません。');
+          return;
+        }
+        let replyMsg = '登録されている動画URL一覧:\n';
+        videos.forEach((v, idx) => {
+          replyMsg += `${idx + 1}. ${v.url}${v.owner ? `（所有者: ${v.owner}）` : ''}\n`;
+        });
+        await replyWithPossibleFile(interaction, replyMsg, 'videos.txt');
+        return;
+      }
+
+      if (commandName === '割り当て一覧') {
+        if (!ADMIN_IDS.includes(interaction.user.id)) {
+          await interaction.editReply('このコマンドは管理者のみ実行できます。');
+          return;
+        }
+        let replyMsg = '現在の動画割り当て一覧:\n';
+        for (let num = 1; num <= 69; num++) {
+          const url = numberToYoutubeUrl[num];
+          if (!url) continue;
+          const video = await YoutubeVideo.findOne({ url });
+          replyMsg += `${num}: ${url}`;
+          if (video && video.owner) {
+            replyMsg += `（所有者: ${video.owner}）`;
+          }
+          replyMsg += '\n';
+        }
+        await replyWithPossibleFile(interaction, replyMsg, 'assignments.txt');
+        return;
+      }
     }
   } catch (err) {
     console.error(err);
