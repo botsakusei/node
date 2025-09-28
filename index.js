@@ -237,9 +237,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName('コイン削除')
     .setDescription('指定ユーザーのコインを削除（管理者専用）')
+    .addIntegerOption(option => option.setName('枚数').setDescription('削除枚数').setRequired(true)) // 必須を先頭
     .addStringOption(option => option.setName('ユーザーid').setDescription('対象ユーザーID').setRequired(false))
     .addStringOption(option => option.setName('所有者名').setDescription('対象所有者名').setRequired(false))
-    .addIntegerOption(option => option.setName('枚数').setDescription('削除枚数').setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder()
     .setName('代理登録')
