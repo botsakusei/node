@@ -12,7 +12,6 @@ app.listen(PORT, () => {
 import {
   Client,
   GatewayIntentBits,
-  Collection,
   PermissionFlagsBits,
   AttachmentBuilder,
   SlashCommandBuilder,
@@ -30,8 +29,8 @@ import YoutubeVideo from './models/YoutubeVideo.js';
 import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
 import UserCoin from './models/UserCoin.js';
 import GachaConfirmedHistory from './models/GachaConfirmedHistory.js';
+import GachaUserHistory from './models/GachaUserHistory.js';
 
-// ---- 各種定数 ----
 const MONGODB_URI = process.env.MONGODB_URI;
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -90,22 +89,12 @@ const coinNames = {
 const INTERVAL_MIN = 10;
 const GACHA_GIF_URL = "https://3.bp.blogspot.com/-nCwQHBNVgkQ/W2QwH3KMGnI/AAAAAAABK4c/2P6EwT4c9wAlVjWbZKkA2A2iV1nR1lIvgCLcBGAs/s400/gacha_capsule_machine.gif";
 const userOwnerSelection = {};
-
-// テストモード状態（メモリ保持／Bot再起動時リセット）
 let isTestMode = false;
 
-// ---- 価格取得 ----
 async function getCurrentPrices(coinIds = COINS, vsCurrency = 'usd') {
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds.join(',')}&vs_currencies=${vsCurrency}`;
-  try {
-    const res = await axios.get(url);
-    return res.data;
-  } catch (e) {
-    console.error('価格取得失敗:', e.message);
-    return {};
-  }
+  try { return (await axios.get(url)).data; } catch(e){console.error('価格取得失敗:',e.message);return{};}
 }
-
 async function checkDrop(coinId, percent = 5) {
   try {
     const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=1`;
@@ -123,7 +112,6 @@ async function checkDrop(coinId, percent = 5) {
   return null;
 }
 
-// ---- Discord Bot ----
 const client = new Client({ intents: [
   GatewayIntentBits.Guilds,
   GatewayIntentBits.GuildMessages,
@@ -138,16 +126,14 @@ client.once('ready', () => {
     for (const coinId of COINS) {
       const drop = await checkDrop(coinId, 5);
       if (drop) {
-        notifyMsg += `🟠 **${coinNames[coinId] || coinId}** が24hで **${drop.dropRate}%急落**！\n（最高値: $${drop.maxPrice.toFixed(4)}→現在値: $${drop.nowPrice.toFixed(4)}）\n`;
+        notifyMsg += `🟠 **${coinNames[coinId]||coinId}** が24hで **${drop.dropRate}%急落**！\n（最高値: $${drop.maxPrice.toFixed(4)}→現在値: $${drop.nowPrice.toFixed(4)}）\n`;
       }
     }
     if (notifyMsg) {
       try {
         const channel = await client.channels.fetch(DROP_NOTIFY_CHANNEL_ID);
         channel.send('【自動監視通知】\n' + notifyMsg);
-      } catch (e) {
-        console.error('急落通知送信エラー:', e);
-      }
+      } catch (e) {console.error('急落通知送信エラー:',e);}
     }
   }, INTERVAL_MIN * 60 * 1000);
 });
@@ -155,7 +141,6 @@ client.once('ready', () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // コイン給付: !givecoin @user 枚数
   if (message.content.startsWith('!givecoin') && ADMIN_IDS.includes(message.author.id)) {
     const match = message.content.match(/!givecoin <@!?(\d+)>\s+(\d+)/);
     if (!match) return message.reply('使い方：!givecoin @user 枚数');
@@ -168,36 +153,17 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // ガチャボタン＋セレクトメニュー設置（管理者のみ、ボタン重複防止）
   if (message.content === '!gachabutton' && ADMIN_IDS.includes(message.author.id)) {
     const fetched = await message.channel.messages.fetch({ limit: 10 });
     const botMsgs = fetched.filter(m => m.author.bot && m.content.includes('ガチャを引くボタン'));
-    for (const m of botMsgs.values()) {
-      await m.delete();
-    }
-
-    const ownerOptions = Object.values(userMap)
-      .map(owner => ({
-        label: owner,
-        value: owner
-      }));
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId('owner_select')
-      .setPlaceholder('11連確定枠の所有者を選択')
-      .addOptions(ownerOptions);
-
+    for (const m of botMsgs.values()) {await m.delete();}
+    const ownerOptions = Object.values(userMap).map(owner => ({label: owner, value: owner}));
+    const selectMenu = new StringSelectMenuBuilder().setCustomId('owner_select').setPlaceholder('11連確定枠の所有者を選択').addOptions(ownerOptions);
     const rowMenu = new ActionRowBuilder().addComponents(selectMenu);
-    const rowButton = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('gacha_1')
-          .setLabel('1回引く')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId('gacha_11')
-          .setLabel('11回引く')
-          .setStyle(ButtonStyle.Success)
-      );
+    const rowButton = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('gacha_1').setLabel('1回引く').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('gacha_11').setLabel('11回引く').setStyle(ButtonStyle.Success)
+    );
     await message.channel.send({
       content: 'ガチャを引くボタン＆確定枠所有者選択はこちら！',
       files: [GACHA_GIF_URL],
@@ -206,7 +172,6 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // 番号ガチャシステム
   if (message.channel.id === TARGET_CHANNEL_ID) {
     const num = parseInt(message.content, 10);
     if (!isNaN(num) && num >= 1 && num <= 69) {
@@ -220,10 +185,7 @@ client.on('messageCreate', async (message) => {
           video.totalCount = (typeof video.totalCount === 'number' ? video.totalCount : 0) + 1;
         }
         await video.save();
-        await message.reply(
-          `番号${num}の動画URL: ${url}\n` +
-          (video.owner ? `所有者: ${video.owner}` : '所有者未登録')
-        );
+        await message.reply(`番号${num}の動画URL: ${url}\n` + (video.owner ? `所有者: ${video.owner}` : '所有者未登録'));
       } else {
         await message.reply(`番号${num}には動画URLがありません。`);
       }
@@ -231,81 +193,30 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// コマンドの定義（pricecheckのみギルドコマンド、他はグローバルコマンド用にも流用可）
 const globalCommands = [
-  new SlashCommandBuilder()
-    .setName('コイン一覧')
-    .setDescription('全ユーザーのコイン残高一覧（管理者専用）')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder()
-    .setName('コイン削除')
-    .setDescription('指定ユーザーのコインを削除（管理者専用）')
-    .addIntegerOption(option => option.setName('枚数').setDescription('削除枚数').setRequired(true))
-    .addStringOption(option => option.setName('ユーザーid').setDescription('対象ユーザーID').setRequired(false))
-    .addStringOption(option => option.setName('所有者名').setDescription('対象所有者名').setRequired(false))
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder()
-    .setName('代理登録')
-    .setDescription('動画URLの所有者を登録（管理者のみ）')
-    .addStringOption(option => option.setName('動画url').setDescription('動画URL').setRequired(true))
-    .addStringOption(option => option.setName('ユーザー名').setDescription('所有者名').setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder()
-    .setName('累計売上')
-    .setDescription('自分自身の累計売上'),
-  new SlashCommandBuilder()
-    .setName('動画シャッフル')
-    .setDescription('番号と動画URLの割り当てをランダムシャッフル（管理者のみ）')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder()
-    .setName('累計売上リセット')
-    .setDescription('全動画の累計売上をリセット（特定ユーザーのみ）')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder()
-    .setName('累計売上変更')
-    .setDescription('累計売上で出力される数をユーザー名指定で変更（管理者のみ）')
-    .addStringOption(option => option.setName('ユーザー名').setDescription('所有者名').setRequired(true))
-    .addIntegerOption(option => option.setName('売上数').setDescription('新しい累計売上数').setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder()
-    .setName('動画一覧')
-    .setDescription('登録されている動画URLの一覧をファイルで出力（管理者のみ）')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder()
-    .setName('割り当て一覧')
-    .setDescription('現在の番号の動画割り当てと所有者一覧をファイルで出力（管理者のみ）')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder()
-    .setName('テストモード')
-    .setDescription('売上DBに反映しないテストモードに切り替え（管理者のみ）')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder()
-    .setName('テストモード解除')
-    .setDescription('テストモード解除（管理者のみ）')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  new SlashCommandBuilder().setName('コイン一覧').setDescription('全ユーザーのコイン残高一覧（管理者専用）').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('コイン削除').setDescription('指定ユーザーのコインを削除（管理者専用）').addIntegerOption(option => option.setName('枚数').setDescription('削除枚数').setRequired(true)).addStringOption(option => option.setName('ユーザーid').setDescription('対象ユーザーID').setRequired(false)).addStringOption(option => option.setName('所有者名').setDescription('対象所有者名').setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('代理登録').setDescription('動画URLの所有者を登録（管理者のみ）').addStringOption(option => option.setName('動画url').setDescription('動画URL').setRequired(true)).addStringOption(option => option.setName('ユーザー名').setDescription('所有者名').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('累計売上').setDescription('自分自身の累計売上'),
+  new SlashCommandBuilder().setName('動画シャッフル').setDescription('番号と動画URLの割り当てをランダムシャッフル（管理者のみ）').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('累計売上リセット').setDescription('全動画の累計売上をリセット（特定ユーザーのみ）').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('累計売上変更').setDescription('累計売上で出力される数をユーザー名指定で変更（管理者のみ）').addStringOption(option => option.setName('ユーザー名').setDescription('所有者名').setRequired(true)).addIntegerOption(option => option.setName('売上数').setDescription('新しい累計売上数').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('動画一覧').setDescription('登録されている動画URLの一覧をファイルで出力（管理者のみ）').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('割り当て一覧').setDescription('現在の番号の動画割り当てと所有者一覧をファイルで出力（管理者のみ）').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('テストモード').setDescription('売上DBに反映しないテストモードに切り替え（管理者のみ）').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('テストモード解除').setDescription('テストモード解除（管理者のみ）').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('ガチャ履歴').setDescription('自分が引いたことのある動画URL一覧（管理者は全員分ファイル）')
 ];
-
 const guildCommands = [
-  new SlashCommandBuilder()
-    .setName('pricecheck')
-    .setDescription('監視銘柄の現在価格を一覧表示（管理者のみ）')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  new SlashCommandBuilder().setName('pricecheck').setDescription('監視銘柄の現在価格を一覧表示（管理者のみ）').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 ];
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 (async () => {
   try {
-    // グローバルコマンド
-    await rest.put(
-      Routes.applicationCommands(CLIENT_ID),
-      { body: globalCommands.map(cmd => cmd.toJSON()) }
-    );
-    // ギルドコマンド（pricecheckのみ）
-    await rest.put(
-      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-      { body: guildCommands.map(cmd => cmd.toJSON()) }
-    );
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: globalCommands.map(cmd => cmd.toJSON()) });
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: guildCommands.map(cmd => cmd.toJSON()) });
     console.log('Slash commands registered!');
   } catch (error) {
     console.error(error);
@@ -318,17 +229,14 @@ function replyWithPossibleFile(interaction, replyMsg, filename = 'result.txt') {
   return interaction.editReply({ content: 'ファイルで出力します。', files: [file] });
 }
 
-// ---- interactionCreate ----
 client.on('interactionCreate', async (interaction) => {
   try {
-    // セレクトメニュー
     if (interaction.isStringSelectMenu() && interaction.customId === 'owner_select') {
       userOwnerSelection[interaction.user.id] = interaction.values[0];
       await interaction.reply({ content: `確定枠: ${interaction.values[0]}を選択しました`, ephemeral: true });
       return;
     }
 
-    // テストモードON
     if (interaction.isCommand() && interaction.commandName === 'テストモード') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         await interaction.reply({ content: '管理者のみ実行できます。', ephemeral: true });
@@ -338,7 +246,6 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.reply({ content: 'テストモードON（売上DBに反映されません）', ephemeral: true });
       return;
     }
-    // テストモードOFF
     if (interaction.isCommand() && interaction.commandName === 'テストモード解除') {
       if (!ADMIN_IDS.includes(interaction.user.id)) {
         await interaction.reply({ content: '管理者のみ実行できます。', ephemeral: true });
@@ -349,7 +256,35 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // ガチャボタン
+    if (interaction.isCommand() && interaction.commandName === 'ガチャ履歴') {
+      await interaction.deferReply();
+      const userId = interaction.user.id;
+      const isAdmin = ADMIN_IDS.includes(userId);
+      if (isAdmin) {
+        const allHistories = await GachaUserHistory.find({});
+        let result = '';
+        for (const hist of allHistories) {
+          result += `ユーザーID: ${hist.userId}\n`;
+          result += (hist.videoUrls.length > 0)
+            ? hist.videoUrls.map(url => `  - ${url}`).join('\n')
+            : '  (履歴なし)';
+          result += '\n\n';
+        }
+        const buffer = Buffer.from(result, 'utf-8');
+        const file = new AttachmentBuilder(buffer, { name: 'gacha_histories.txt' });
+        await interaction.editReply({ content: '全ユーザーのガチャ履歴です。', files: [file] });
+      } else {
+        const history = await GachaUserHistory.findOne({ userId });
+        if (!history || !history.videoUrls.length) {
+          await interaction.editReply('あなたのガチャ履歴はまだありません。');
+        } else {
+          const result = `あなたのガチャ履歴:\n` + history.videoUrls.map(url => `- ${url}`).join('\n');
+          await interaction.editReply(result);
+        }
+      }
+      return;
+    }
+
     if (interaction.isButton()) {
       const userId = interaction.user.id;
       let userCoin = await UserCoin.findOne({ userId });
@@ -361,7 +296,6 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      // 動画一覧一括取得
       const allVideos = await YoutubeVideo.find({});
       const urlToVideo = {};
       allVideos.forEach(v => { urlToVideo[v.url] = v; });
@@ -371,7 +305,6 @@ client.on('interactionCreate', async (interaction) => {
       let excludeUrls = [];
       let confirmedUrl = null;
 
-      // 11連ガチャ確定枠
       if (count === 11 && userOwnerSelection[userId]) {
         const owner = userOwnerSelection[userId];
         let history = await GachaConfirmedHistory.findOne({ userId, owner });
@@ -414,16 +347,26 @@ client.on('interactionCreate', async (interaction) => {
         }
       }
 
-      // テストモードでなければ売上加算
       if (!isTestMode) {
         await Promise.all(allVideos.map(v => v.isModified() ? v.save() : Promise.resolve()));
       }
 
-      // DM送信成功時のみコイン消費
       try {
         await interaction.user.send(`🎰 ガチャ結果（${count}回）:\n` + results.join('\n'));
         userCoin.coin -= count;
         await userCoin.save();
+
+        let userHistory = await GachaUserHistory.findOne({ userId });
+        if (!userHistory) userHistory = new GachaUserHistory({ userId, videoUrls: [] });
+        for (const line of results) {
+          const urlMatch = line.match(/(https?:\/\/[^\s]+)/);
+          if (urlMatch && !userHistory.videoUrls.includes(urlMatch[1])) {
+            userHistory.videoUrls.push(urlMatch[1]);
+          }
+        }
+        userHistory.lastUpdated = new Date();
+        await userHistory.save();
+
         await interaction.reply({ content: `${count}回分の結果をDMで送りました！`, ephemeral: true });
       } catch (e) {
         await interaction.reply({ content: `DMが送信できませんでした。サーバーからのDMを許可してください。`, ephemeral: true });
@@ -431,8 +374,7 @@ client.on('interactionCreate', async (interaction) => {
       }
       return;
     }
-
-    // スラッシュコマンド
+// スラッシュコマンド
     if (interaction.isCommand()) {
       if (interaction.commandName === 'コイン一覧') {
         if (!ADMIN_IDS.includes(interaction.user.id)) {
@@ -671,6 +613,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
     }
+
   } catch (err) {
     console.error(err);
     try {
