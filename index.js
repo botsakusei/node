@@ -20,16 +20,15 @@ import {
   Routes,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  StringSelectMenuBuilder
 } from 'discord.js';
 import mongoose from 'mongoose';
 import axios from 'axios';
 
 import YoutubeVideo from './models/YoutubeVideo.js';
 import numberToYoutubeUrl from './config/numberToYoutubeUrl.js';
-
-// コイン管理用モデル
-import UserCoin from './models/UserCoin.js'; // 別途 models/UserCoin.js を作成すること
+import UserCoin from './models/UserCoin.js';
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const TOKEN = process.env.TOKEN;
@@ -88,9 +87,10 @@ const coinNames = {
 };
 
 const INTERVAL_MIN = 10;
-
-// フリー素材GIF
 const GACHA_GIF_URL = "https://3.bp.blogspot.com/-nCwQHBNVgkQ/W2QwH3KMGnI/AAAAAAABK4c/2P6EwT4c9wAlVjWbZKkA2A2iV1nR1lIvgCLcBGAs/s400/gacha_capsule_machine.gif";
+
+// ユーザー毎の所有者選択（メモリ保存）
+const userOwnerSelection = {};
 
 // 価格取得関数
 async function getCurrentPrices(coinIds = COINS, vsCurrency = 'usd') {
@@ -104,7 +104,6 @@ async function getCurrentPrices(coinIds = COINS, vsCurrency = 'usd') {
   }
 }
 
-// 急落チェック関数
 async function checkDrop(coinId, percent = 5) {
   try {
     const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=1`;
@@ -122,7 +121,6 @@ async function checkDrop(coinId, percent = 5) {
   return null;
 }
 
-// sleep関数
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -155,7 +153,6 @@ client.once('ready', () => {
   }, INTERVAL_MIN * 60 * 1000);
 });
 
-// 管理者用コイン給付コマンド
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
@@ -172,9 +169,20 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // ガチャボタン設置（管理者のみ）
+  // ガチャボタン＋セレクトメニュー設置（管理者のみ）
   if (message.content === '!gachabutton' && ADMIN_IDS.includes(message.author.id)) {
-    const row = new ActionRowBuilder()
+    // 所有者リスト
+    const ownerOptions = Object.values(userMap).map(owner => ({
+      label: owner,
+      value: owner
+    }));
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId('owner_select')
+      .setPlaceholder('11連確定枠の所有者を選択')
+      .addOptions(ownerOptions);
+
+    const rowMenu = new ActionRowBuilder().addComponents(selectMenu);
+    const rowButton = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId('gacha_1')
@@ -186,9 +194,9 @@ client.on('messageCreate', async (message) => {
           .setStyle(ButtonStyle.Success)
       );
     await message.channel.send({
-      content: 'ガチャを引くボタンはこちら！',
+      content: 'ガチャを引くボタン＆確定枠所有者選択はこちら！',
       files: [GACHA_GIF_URL],
-      components: [row]
+      components: [rowMenu, rowButton]
     });
     return;
   }
@@ -280,6 +288,13 @@ async function replyWithPossibleFile(interaction, replyMsg, filename = 'result.t
 }
 
 client.on('interactionCreate', async (interaction) => {
+  // 所有者セレクトメニュー選択
+  if (interaction.isStringSelectMenu() && interaction.customId === 'owner_select') {
+    userOwnerSelection[interaction.user.id] = interaction.values[0];
+    await interaction.reply({ content: `確定枠: ${interaction.values[0]}を選択しました`, ephemeral: true });
+    return;
+  }
+
   if (interaction.isButton()) {
     // ボタン押下ガチャ
     const userId = interaction.user.id;
@@ -291,18 +306,27 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.reply({ content: `コインが足りません！（所持: ${userCoin.coin}枚）`, ephemeral: true });
       return;
     }
-
     userCoin.coin -= count;
     await userCoin.save();
 
-    // 抽選
     let results = [];
-    for (let i = 0; i < count; i++) {
+    if (count === 11 && userOwnerSelection[userId]) {
+      // 指定所有者の動画から1つ確定
+      const owner = userOwnerSelection[userId];
+      const ownerVideos = await YoutubeVideo.find({ owner });
+      if (ownerVideos.length > 0) {
+        const video = ownerVideos[Math.floor(Math.random() * ownerVideos.length)];
+        results.push(`【確定枠】${owner}: ${video.url}`);
+      } else {
+        results.push(`【確定枠】${owner}: 所有者動画が見つかりません`);
+      }
+    }
+    // 残り枠はランダム
+    for (let i = results.length; i < count; i++) {
       const num = Math.floor(Math.random() * 69) + 1;
       results.push(`番号${num}: ${numberToYoutubeUrl[num]}`);
     }
 
-    // ガチャGIFはボタン設置時に1回送信済なのでここでは送らない
     await interaction.user.send(`🎰 ガチャ結果（${count}回）:\n` + results.join('\n'));
     await interaction.reply({ content: `${count}回分の結果をDMで送りました！`, ephemeral: true });
     return;
