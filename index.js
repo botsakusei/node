@@ -151,7 +151,6 @@ client.once('ready', () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // コイン給付: !givecoin @user 枚数
   if (message.content.startsWith('!givecoin') && ADMIN_IDS.includes(message.author.id)) {
     const match = message.content.match(/!givecoin <@!?(\d+)>\s+(\d+)/);
     if (!match) return message.reply('使い方：!givecoin @user 枚数');
@@ -313,25 +312,38 @@ client.on('interactionCreate', async (interaction) => {
       // まず reply（3秒以内に必ず呼ぶ！）
       await interaction.reply({ content: `${count}回分の結果をDMで送りました！`, ephemeral: true });
 
-      // ここからガチャ抽選と売上加算
+      // ここからガチャ抽選と売上加算（11連の確定枠重複防止）
       let results = [];
+      let excludeUrls = [];
+      let confirmedUrl = null;
       if (count === 11 && userOwnerSelection[userId]) {
         const owner = userOwnerSelection[userId];
         const ownerVideos = await YoutubeVideo.find({ owner });
         if (ownerVideos.length > 0) {
           const video = ownerVideos[Math.floor(Math.random() * ownerVideos.length)];
-          results.push(`【確定枠】${owner}: ${video.url}`);
+          confirmedUrl = video.url;
+          results.push(`【確定枠】${owner}: ${confirmedUrl}`);
           video.totalCount = (typeof video.totalCount === 'number' ? video.totalCount : 0) + 1;
           await video.save();
+          excludeUrls.push(confirmedUrl); // 確定枠を除外
         } else {
           results.push(`【確定枠】${owner}: 所有者動画が見つかりません`);
         }
       }
       for (let i = results.length; i < count; i++) {
-        const num = Math.floor(Math.random() * 69) + 1;
-        const url = numberToYoutubeUrl[num];
-        results.push(`番号${num}: ${url}`);
-        let video = await YoutubeVideo.findOne({ url });
+        // excludeUrlsに入っていない動画から抽選
+        let candidates = [];
+        for (let num = 1; num <= 69; num++) {
+          const url = numberToYoutubeUrl[num];
+          if (url && !excludeUrls.includes(url)) {
+            candidates.push({num, url});
+          }
+        }
+        if (candidates.length === 0) break;
+        const pick = candidates[Math.floor(Math.random() * candidates.length)];
+        results.push(`番号${pick.num}: ${pick.url}`);
+        excludeUrls.push(pick.url);
+        let video = await YoutubeVideo.findOne({ url: pick.url });
         if (video) {
           video.totalCount = (typeof video.totalCount === 'number' ? video.totalCount : 0) + 1;
           await video.save();
